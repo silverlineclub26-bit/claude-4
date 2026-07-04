@@ -606,6 +606,15 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         rec["add_label"] = ("順勢加碼多單" if add_signal == "add_long"
                             else "順勢加碼空單" if add_signal == "add_short" else "")
 
+        # 建議口數(積極加碼階梯)：站上月線+10日+5日=3口,依序遞減,破月線=0
+        _lots = {"up_strong": 3, "up_r5": 2, "up_r10": 1,
+                 "down_strong": 3, "down_r5": 2, "down_r10": 1, "none": 0}[state]
+        rec["lots"] = _lots
+        if _lots == 0:
+            rec["lots_label"] = "空手觀望"
+        else:
+            rec["lots_label"] = "建議持有 %d 口%s" % (_lots, "多單" if state.startswith("up") else "空單")
+
         prev_below5 = (m5 is not None and c < m5)
         prev_below10 = (m10 is not None and c < m10)
         prev_above5 = (m5 is not None and c > m5)
@@ -692,6 +701,9 @@ def generate_html_report(groups, periods):
   .sig-up { color:#E5484D; }
   .sig-down { color:#3DAE73; }
   .verdict-desc { font-size:14.5px; color:var(--text); }
+  .lots { margin-top:10px; padding:14px; border-radius:8px; font-weight:800; font-size:20px;
+    text-align:center; border:1px solid var(--line); background:#14171C; }
+  .lots-long { color:#E5484D; } .lots-short { color:#3DAE73; } .lots-flat { color:#8B919B; }
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
@@ -771,6 +783,7 @@ def generate_html_report(groups, periods):
     <div class="verdict-title"><span id="verdictLabel">—</span></div>
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
+    <div class="lots" id="lotsBox"></div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
       <span class="chip" id="chipType">型態<b class="dir-val" id="alignVal"></b></span>
@@ -923,6 +936,11 @@ function render(idx) {
   const act = document.getElementById("actionBox");
   act.textContent = r.action_label;
   act.className = "action " + (r.action_class || "act-scalp");
+
+  const lotsEl = document.getElementById("lotsBox");
+  lotsEl.textContent = "📊 " + r.lots_label;
+  lotsEl.className = "lots " + (r.lots === 0 ? "lots-flat"
+                    : r.state && r.state.indexOf("up") === 0 ? "lots-long" : "lots-short");
 
   const addon = document.getElementById("addonBox");
   if (r.add_signal === "add_long" || r.add_signal === "add_short") {
