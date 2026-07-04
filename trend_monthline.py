@@ -546,15 +546,24 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
     p5 = str(periods[0])
     p10 = str(periods[1]) if len(periods) > 1 else str(periods[0])
     p20 = str(periods[2]) if len(periods) > 2 else p10
+    p60 = str(periods[3]) if len(periods) > 3 else p20   # 季線,空頭確認用
     prev_below5 = prev_below10 = False   # 前一日收盤是否在5/10日之下
     prev_above5 = prev_above10 = False   # 前一日收盤是否在5/10日之上
     up_units = dn_units = 0               # 本波加碼口數(顯示用,上限3)
-    for rec in records:
+    for idx, rec in enumerate(records):
         c = rec["last_close"]
         m5 = rec["ma_now"].get(p5)
         m10 = rec["ma_now"].get(p10)
         m20 = rec["ma_now"].get(p20)
+        m60 = rec["ma_now"].get(p60)
         add_signal = "none"
+
+        # 季線空頭確認：收盤跌破季線 且 季線下彎(比20根前低)→ 才允許做空
+        bear = False
+        if m60 is not None and idx >= 20:
+            m60_prev = records[idx - 20]["ma_now"].get(p60)
+            if m60_prev is not None and c < m60 and m60 < m60_prev:
+                bear = True
 
         if m20 is None or m5 is None or m10 is None:
             state = "none"
@@ -571,7 +580,7 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
             elif up_units < 3 and prev_below10 and c >= m10:
                 add_signal = "add_long"; up_units += 1
             dn_units = 0                  # 換到多方 → 重置空方口數
-        else:                             # 跌破月線 = 空方 → 純多方:空手觀望(不做空,不加碼)
+        else:                             # 跌破月線 = 空方
             if c <= m5:
                 state = "down_strong"
             elif c <= m10:
@@ -588,22 +597,29 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         rec["accent"] = accent
         rec["action_class"] = act_class
 
-        # 箭頭 = 強度：多方站上幾條短均(5/10) → 幾個↑；空方對稱
+        rec["add_signal"] = add_signal
+        rec["add_label"] = ("順勢加碼多單" if add_signal == "add_long" else "")
+
+        # 建議口數 + 箭頭:多方1-3口多;空頭確認(破季線)才1-3口空;破月線但非空頭→空手
         if state.startswith("up"):
+            lots = {"up_strong": 3, "up_r5": 2, "up_r10": 1}[state]
             rec["arrow_dir"] = "up"
             rec["arrow_n"] = (1 if c >= m5 else 0) + (1 if c >= m10 else 0)
-        else:                             # 空方/資料不足 → 空手,不顯示箭頭
+            rec["lots"] = lots
+            rec["lots_label"] = "建議持有 %d 口多單" % lots
+        elif state.startswith("down") and bear:      # 季線空頭確認 → 做空
+            lots = {"down_strong": 3, "down_r5": 2, "down_r10": 1}[state]
+            rec["arrow_dir"] = "down"
+            rec["arrow_n"] = (1 if c <= m5 else 0) + (1 if c <= m10 else 0)
+            rec["lots"] = lots
+            rec["lots_label"] = "建議持有 %d 口空單" % lots
+            rec["action_label"] = "季線空頭確認 · 做空 %d 口" % lots
+        else:                                         # 破月線但非空頭確認 / 資料不足 → 空手
             rec["arrow_dir"], rec["arrow_n"] = "none", 0
-
-        rec["add_signal"] = add_signal
-        rec["add_label"] = ("順勢加碼多單" if add_signal == "add_long"
-                            else "順勢加碼空單" if add_signal == "add_short" else "")
-
-        # 建議口數(純多方積極加碼)：站上月線+10日+5日=3口、依序遞減；破月線=空手0口(不做空)
-        _lots = {"up_strong": 3, "up_r5": 2, "up_r10": 1,
-                 "down_strong": 0, "down_r5": 0, "down_r10": 0, "none": 0}[state]
-        rec["lots"] = _lots
-        rec["lots_label"] = ("建議持有 %d 口多單" % _lots) if _lots > 0 else "空手觀望(0口)"
+            rec["lots"] = 0
+            rec["lots_label"] = "空手觀望(0口)"
+            if state.startswith("down"):
+                rec["action_label"] = "跌破月線 · 多單出場、空手觀望(非空頭年不做空)"
 
         prev_below5 = (m5 is not None and c < m5)
         prev_below10 = (m10 is not None and c < m10)
