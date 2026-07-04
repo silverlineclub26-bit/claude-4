@@ -543,6 +543,12 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
             continue
 
     # 月線系統：月線(第3短均,預設20日)之上=多方、之下=空方；破月線出場；站上10日/5日加碼(上限3)
+    # ATR(20日平均振幅,點)供風險式口數試算
+    _atr = {}
+    for i in range(len(bars)):
+        if i >= 20:
+            _atr[bars[i]["date"]] = sum(bars[j]["max"] - bars[j]["min"] for j in range(i - 19, i + 1)) / 20.0
+
     p5 = str(periods[0])
     p10 = str(periods[1]) if len(periods) > 1 else str(periods[0])
     p20 = str(periods[2]) if len(periods) > 2 else p10
@@ -620,6 +626,9 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
             rec["lots_label"] = "空手觀望(0口)"
             if state.startswith("down"):
                 rec["action_label"] = "跌破月線 · 多單出場、空手觀望(非空頭年不做空)"
+
+        rec["atr"] = round(_atr.get(rec["last_date"], 0.0), 1)
+        rec["lots_dir"] = 1 if state.startswith("up") else (-1 if (state.startswith("down") and bear) else 0)
 
         prev_below5 = (m5 is not None and c < m5)
         prev_below10 = (m10 is not None and c < m10)
@@ -710,6 +719,12 @@ def generate_html_report(groups, periods):
   .lots { margin-top:10px; padding:14px; border-radius:8px; font-weight:800; font-size:20px;
     text-align:center; border:1px solid var(--line); background:#14171C; }
   .lots-long { color:#E5484D; } .lots-short { color:#3DAE73; } .lots-flat { color:#8B919B; }
+  .caprow { margin-top:10px; display:flex; align-items:center; justify-content:center; gap:8px;
+    font-size:13.5px; color:#8B919B; flex-wrap:wrap; }
+  .caprow input { width:120px; padding:7px 9px; border-radius:7px; border:1px solid var(--line);
+    background:#14171C; color:#E6E8EB; font-size:15px; font-weight:700; text-align:right; }
+  .risklots { margin-top:8px; padding:12px 14px; border-radius:8px; font-weight:800; font-size:16px;
+    text-align:center; border:1px solid var(--line); background:#14171C; line-height:1.5; }
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
@@ -790,6 +805,8 @@ def generate_html_report(groups, periods):
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
     <div class="lots" id="lotsBox"></div>
+    <div class="caprow">本金 <input type="number" id="capInput" min="10000" step="10000" value="500000"> 元 · 風險3% 複利試算(台指微台)</div>
+    <div class="risklots" id="riskBox"></div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
       <span class="chip" id="chipType">型態<b class="dir-val" id="alignVal"></b></span>
@@ -831,6 +848,7 @@ const tabsEl = document.getElementById("tabs");
 const eyebrowEl = document.getElementById("eyebrow");
 const memberSel = document.getElementById("memberSel");
 const dateInput = document.getElementById("dateInput");
+const capInput = document.getElementById("capInput");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 
@@ -841,6 +859,28 @@ function fmt(v, d) {
   return Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 function pct(v) { return (v * 100).toFixed(0) + "%"; }
+function renderRisk() {
+  var r = window.__curRec; if (!r) return;
+  var box = document.getElementById("riskBox");
+  var cap = parseFloat(document.getElementById("capInput").value) || 0;
+  var atr = r.atr || 0, PV = 10, MG = 31800, RISK = 0.03;
+  if (!r.lots_dir || cap <= 0 || atr <= 0) {
+    box.textContent = "🧮 空手觀望 · 無建議口數"; box.className = "risklots lots-flat"; return;
+  }
+  var unit = Math.floor(cap * RISK / (2 * atr * PV));   // 每檔位風險單位口數(隨本金成長=複利)
+  if (unit < 1) {
+    var need = Math.ceil(2 * atr * PV / RISK / 10000) * 10000;
+    box.textContent = "🧮 風險3% 算出 0 口(本金偏小,不足 1 風險單位) · 約需 NT$" + fmt(need, 0) + " 才夠 1 口";
+    box.className = "risklots lots-flat"; return;
+  }
+  var capMax = Math.floor(cap / MG), lots = r.lots * unit, capped = false;
+  if (lots > capMax) { lots = capMax; capped = true; }
+  var dir = r.lots_dir > 0 ? "口多單" : "口空單";
+  box.innerHTML = "🧮 風險3% · 建議 <b>" + lots + "</b> " + dir +
+    '<br><span style="font-weight:600;font-size:12.5px;color:#8B919B;">檔位 ' + r.lots + " × " + unit +
+    " 口/單位　ATR " + atr + " 點　保證金上限 " + capMax + " 口" + (capped ? " ⚠️已達上限" : "") + "</span>";
+  box.className = "risklots " + (r.lots_dir > 0 ? "lots-long" : "lots-short");
+}
 function card(k, v, sub) {
   return '<div class="stat"><div class="stat-k">' + k + '</div>' +
          '<div class="stat-v">' + v + '</div><div class="stat-sub">' + sub + '</div></div>';
@@ -948,6 +988,9 @@ function render(idx) {
   lotsEl.className = "lots " + (r.lots === 0 ? "lots-flat"
                     : r.state && r.state.indexOf("up") === 0 ? "lots-long" : "lots-short");
 
+  window.__curRec = r;
+  renderRisk();
+
   const addon = document.getElementById("addonBox");
   if (r.add_signal === "add_long" || r.add_signal === "add_short") {
     addon.textContent = "🎯 " + r.add_label;
@@ -1029,6 +1072,15 @@ dateInput.addEventListener("change", function () {
 prevBtn.addEventListener("click", function () { if (curIdx > 0) render(curIdx - 1); });
 nextBtn.addEventListener("click", function () {
   if (curIdx < curHist().length - 1) render(curIdx + 1);
+});
+
+// 本金輸入：記住上次輸入,改動即重算(隨本金變大=複利加碼)
+var _savedCap = null;
+try { _savedCap = localStorage.getItem("ml_cap"); } catch (e) {}
+if (_savedCap) capInput.value = _savedCap;
+capInput.addEventListener("input", function () {
+  try { localStorage.setItem("ml_cap", capInput.value); } catch (e) {}
+  renderRisk();
 });
 
 // 預設顯示第一個頁籤的最新一天
