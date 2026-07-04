@@ -520,13 +520,13 @@ _STATE_META = {
                   "破5日整理 · 續抱多單", "#E5484D", "act-hold-long"),
     "up_r10":    ("多方趨勢", "站上月線、跌破10日但仍守月線，多方轉弱，仍續抱到月線。",
                   "破10日轉弱 · 仍守月線續抱", "#E5484D", "act-hold-long"),
-    # 月線之下 = 空方 / 多單出場
-    "down_strong": ("空方趨勢", "收盤跌破月線、且壓在5日下，空方最強，多單出場、續抱空單。",
-                    "跌破月線 · 多單出場、續抱空單", "#3DAE73", "act-hold-short"),
-    "down_r5":   ("空方趨勢", "跌破月線、反彈站上5日守10日，空方整理。",
-                  "反彈5日 · 續抱空單", "#3DAE73", "act-hold-short"),
-    "down_r10":  ("空方趨勢", "跌破月線、反彈站上10日但仍壓月線下，空方轉弱。",
-                  "反彈10日 · 仍守月線續抱空", "#3DAE73", "act-hold-short"),
+    # 月線之下 = 空方 → 純多方策略:多單出場、空手觀望(回測顯示台指做空拖累報酬、放大回檔)
+    "down_strong": ("空方趨勢", "收盤跌破月線，多單出場、空手觀望(不建議做空)。",
+                    "跌破月線 · 多單出場、空手觀望", "#3DAE73", "act-hold-short"),
+    "down_r5":   ("空方趨勢", "跌破月線後反彈站上5日，仍在月線下、空手觀望。",
+                  "月線下反彈 · 空手觀望", "#3DAE73", "act-hold-short"),
+    "down_r10":  ("空方趨勢", "跌破月線後反彈站上10日，仍在月線下、空手觀望。",
+                  "月線下反彈 · 空手觀望", "#3DAE73", "act-hold-short"),
     "none":      ("資料不足", "月線尚未成形。", "觀望", "#8B919B", "act-scalp"),
 }
 
@@ -571,17 +571,13 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
             elif up_units < 3 and prev_below10 and c >= m10:
                 add_signal = "add_long"; up_units += 1
             dn_units = 0                  # 換到多方 → 重置空方口數
-        else:                             # 跌破月線 = 空方 / 多單出場
+        else:                             # 跌破月線 = 空方 → 純多方:空手觀望(不做空,不加碼)
             if c <= m5:
                 state = "down_strong"
             elif c <= m10:
                 state = "down_r5"
             else:
                 state = "down_r10"
-            if dn_units < 3 and prev_above5 and c <= m5:
-                add_signal = "add_short"; dn_units += 1
-            elif dn_units < 3 and prev_above10 and c <= m10:
-                add_signal = "add_short"; dn_units += 1
             up_units = 0
 
         headline, desc, act_label, accent, act_class = _STATE_META[state]
@@ -596,24 +592,18 @@ def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=
         if state.startswith("up"):
             rec["arrow_dir"] = "up"
             rec["arrow_n"] = (1 if c >= m5 else 0) + (1 if c >= m10 else 0)
-        elif state.startswith("down"):
-            rec["arrow_dir"] = "down"
-            rec["arrow_n"] = (1 if c <= m5 else 0) + (1 if c <= m10 else 0)
-        else:
+        else:                             # 空方/資料不足 → 空手,不顯示箭頭
             rec["arrow_dir"], rec["arrow_n"] = "none", 0
 
         rec["add_signal"] = add_signal
         rec["add_label"] = ("順勢加碼多單" if add_signal == "add_long"
                             else "順勢加碼空單" if add_signal == "add_short" else "")
 
-        # 建議口數(積極加碼階梯)：站上月線+10日+5日=3口,依序遞減,破月線=0
+        # 建議口數(純多方積極加碼)：站上月線+10日+5日=3口、依序遞減；破月線=空手0口(不做空)
         _lots = {"up_strong": 3, "up_r5": 2, "up_r10": 1,
-                 "down_strong": 3, "down_r5": 2, "down_r10": 1, "none": 0}[state]
+                 "down_strong": 0, "down_r5": 0, "down_r10": 0, "none": 0}[state]
         rec["lots"] = _lots
-        if _lots == 0:
-            rec["lots_label"] = "空手觀望"
-        else:
-            rec["lots_label"] = "建議持有 %d 口%s" % (_lots, "多單" if state.startswith("up") else "空單")
+        rec["lots_label"] = ("建議持有 %d 口多單" % _lots) if _lots > 0 else "空手觀望(0口)"
 
         prev_below5 = (m5 is not None and c < m5)
         prev_below10 = (m10 is not None and c < m10)
