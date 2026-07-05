@@ -300,8 +300,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
     padding:16px; margin-bottom:12px; }
   .card-title { font-size:12.5px; font-weight:800; color:var(--muted); letter-spacing:.6px;
-    display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    display:flex; align-items:center; gap:8px; margin-bottom:12px; cursor:pointer; user-select:none; }
   .tag { font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; border:1px solid var(--line); }
+  .caret { margin-left:auto; font-size:13px; color:var(--muted); transition:transform .2s; padding:0 2px; }
+  .card.collapsed .card-title { margin-bottom:0; }
+  .card.collapsed .card-body { display:none; }
+  .card.collapsed .caret { transform:rotate(-90deg); }
 
   /* 盤勢建議 hero */
   .regime { display:inline-block; font-size:12px; font-weight:800; padding:4px 11px; border-radius:999px;
@@ -396,48 +400,54 @@ _TEMPLATE = r"""<!DOCTYPE html>
   </div>
 
   <!-- 1. 盤勢建議 -->
-  <div class="card">
-    <div class="card-title">📈 目前盤勢建議</div>
-    <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
-    <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
-    <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
-    <div class="maline" id="maLine"></div>
-    <div class="desc" id="descEl"></div>
-    <div class="action" id="actionEl"></div>
-    <div class="baselots" id="baseLots"></div>
-    <div class="levels" id="levels"></div>
+  <div class="card" id="cardStance">
+    <div class="card-title">📈 目前盤勢建議<span class="caret">▾</span></div>
+    <div class="card-body">
+      <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
+      <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
+      <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
+      <div class="maline" id="maLine"></div>
+      <div class="desc" id="descEl"></div>
+      <div class="action" id="actionEl"></div>
+      <div class="baselots" id="baseLots"></div>
+      <div class="levels" id="levels"></div>
+    </div>
   </div>
 
   <!-- 2. 我的現有部位 -->
-  <div class="card">
-    <div class="card-title">📌 我的現有部位<span class="tag">自動記憶 · 算損益</span></div>
-    <div class="dir-toggle" id="posDir">
-      <button data-d="1">多單</button><button data-d="-1">空單</button>
+  <div class="card" id="cardPos">
+    <div class="card-title">📌 我的現有部位<span class="tag">自動記憶 · 算損益</span><span class="caret">▾</span></div>
+    <div class="card-body">
+      <div class="dir-toggle" id="posDir">
+        <button data-d="1">多單</button><button data-d="-1">空單</button>
+      </div>
+      <div class="row2">
+        <div class="field"><input type="number" id="posLots" min="0" step="1" placeholder="0" inputmode="numeric"><span>口</span></div>
+        <div class="field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
+      </div>
+      <div class="result" id="posBox">尚未輸入部位</div>
+      <div class="hint" id="hintBox" style="display:none"></div>
     </div>
-    <div class="row2">
-      <div class="field"><input type="number" id="posLots" min="0" step="1" placeholder="0" inputmode="numeric"><span>口</span></div>
-      <div class="field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
-    </div>
-    <div class="result" id="posBox">尚未輸入部位</div>
-    <div class="hint" id="hintBox" style="display:none"></div>
   </div>
 
-  <!-- 3. 持有口數試算 -->
-  <div class="card">
-    <div class="card-title">🧮 持有口數試算<span class="tag">台指微台 · 破月線出場</span></div>
-    <div class="cap-field">
-      <span>本金</span>
-      <input type="number" id="capInput" min="1" step="1" value="10" inputmode="numeric" placeholder="10">
-      <span>萬元</span>
-    </div>
-    <div class="risk-row">
-      <span class="risk-lab">風險</span>
-      <div class="chips" id="riskChips">
-        <button data-r="5">5%</button><button data-r="10">10%</button><button data-r="20">20%</button><button data-r="30">30%</button>
-        <input type="number" id="riskCustom" class="custom" min="1" max="100" placeholder="自訂" inputmode="numeric">
+  <!-- 3. 風險策略 -->
+  <div class="card" id="cardRisk">
+    <div class="card-title">🧮 風險策略<span class="tag">控管單筆風險 · 自動算口數</span><span class="caret">▾</span></div>
+    <div class="card-body">
+      <div class="cap-field">
+        <span>本金</span>
+        <input type="number" id="capInput" min="1" step="1" value="10" inputmode="numeric" placeholder="10">
+        <span>萬元</span>
       </div>
+      <div class="risk-row">
+        <span class="risk-lab">風險</span>
+        <div class="chips" id="riskChips">
+          <button data-r="5">5%</button><button data-r="10">10%</button><button data-r="20">20%</button><button data-r="30">30%</button>
+          <input type="number" id="riskCustom" class="custom" min="1" max="100" placeholder="自訂" inputmode="numeric">
+        </div>
+      </div>
+      <div class="result" id="riskBox"></div>
     </div>
-    <div class="result" id="riskBox"></div>
   </div>
 
   <footer>
@@ -652,6 +662,17 @@ Array.prototype.forEach.call(_db, function (b) {
 posLots.addEventListener("input", function () { try { localStorage.setItem("ml_pos_lots", posLots.value); } catch (e) {} renderPos(); });
 posCost.addEventListener("input", function () { try { localStorage.setItem("ml_pos_cost", posCost.value); } catch (e) {} renderPos(); });
 _syncPosDir();
+
+// 區塊收放(點標題列切換,記憶狀態)
+Array.prototype.forEach.call(document.querySelectorAll(".card"), function (card) {
+  var title = card.querySelector(".card-title");
+  var key = "ml_col_" + card.id;
+  try { if (localStorage.getItem(key) === "1") card.classList.add("collapsed"); } catch (e) {}
+  if (title) title.addEventListener("click", function () {
+    card.classList.toggle("collapsed");
+    try { localStorage.setItem(key, card.classList.contains("collapsed") ? "1" : "0"); } catch (e) {}
+  });
+});
 
 render(curIdx);
 </script>
