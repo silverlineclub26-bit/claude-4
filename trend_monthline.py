@@ -176,15 +176,14 @@ def build_history(bars, max_days=180):
         vr = sum(r5) / len(r5); vb = sum(r20) / len(r20)
         choppy = vb > 0 and vr > 1.2 * vb                       # 近5振幅 > 1.2×近20 = 洗盤
 
-        # 發散 = 相鄰均線間距(|5-10| + |10-月|)比 3 天前變大;變小=收斂(高波動→震盪,低波動→盤整)
+        # 發散(進取版)= 5日與10日距離比 3 天前變大;變小=收斂(高波動→震盪,低波動→盤整)
         conv, conv_label = "flat", "—"
-        if i >= 3 and None not in (ma5[i], ma10[i], ma20[i], ma5[i - 3], ma10[i - 3], ma20[i - 3]):
-            g_now = abs(ma5[i] - ma10[i]) + abs(ma10[i] - ma20[i])
-            g_prev = abs(ma5[i - 3] - ma10[i - 3]) + abs(ma10[i - 3] - ma20[i - 3])
-            if g_now > g_prev:
-                conv, conv_label = "diverge", "發散"
-            elif g_now < g_prev:
+        if i >= 3 and None not in (ma5[i], ma10[i], ma5[i - 3], ma10[i - 3]):
+            dn = abs(ma5[i] - ma10[i]); dr = abs(ma5[i - 3] - ma10[i - 3])
+            if dn < dr:
                 conv, conv_label = ("chop", "震盪") if choppy else ("range", "盤整")
+            else:
+                conv, conv_label = "diverge", "發散"
 
         triband, triband_label = "mix", "中性"
         win = [v for v in sp3[max(0, i - 19):i + 1] if v is not None]
