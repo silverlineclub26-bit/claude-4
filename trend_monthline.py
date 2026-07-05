@@ -418,11 +418,6 @@ function render(idx) {
   act.textContent = r.action;
   act.className = "action " + (r.dir > 0 ? "act-long" : r.dir < 0 ? "act-short" : "act-flat");
 
-  const bl = document.getElementById("baseLots");
-  if (r.dir > 0) bl.innerHTML = '建議基準 <b style="color:var(--red)">' + r.lots + '</b> 口多單';
-  else if (r.dir < 0) bl.innerHTML = '建議基準 <b style="color:var(--green)">' + r.lots + '</b> 口空單';
-  else bl.innerHTML = '<span style="color:var(--muted)">空手觀望（0 口）</span>';
-
   const defs = [["收盤", r.close], ["5日", r.ma5], ["10日", r.ma10], ["月線", r.ma20], ["季線", r.ma60]];
   let lv = "";
   defs.forEach(function (d, k) {
@@ -442,35 +437,49 @@ function render(idx) {
 
 function renderRisk() {
   var r = window.__curRec; if (!r) return;
+  var bl = document.getElementById("baseLots");
   var cap = (parseFloat(capInput.value) || 0) * 10000;   // 萬元
   var RISK = (window.__risk || 10) / 100;
   var dir = r.dir, m20 = r.ma20, c = r.close;
-  if (dir === 0 || cap <= 0 || m20 == null) {
+  if (dir === 0) {
     riskBox.textContent = "系統空手 · 無建議口數"; riskBox.className = "result flat";
+    bl.innerHTML = '<span style="color:var(--muted)">系統空手觀望（0 口）</span>';
+    window.__targetLots = 0; renderHint(); return;
+  }
+  if (cap <= 0 || m20 == null) {
+    riskBox.textContent = "請於下方輸入本金"; riskBox.className = "result flat";
+    bl.innerHTML = '<span style="color:var(--muted)">請輸入本金以計算建議口數</span>';
     window.__targetLots = 0; renderHint(); return;
   }
   var dist = dir > 0 ? (c - m20) : (m20 - c);
   var stop = Math.max(dist, c * 0.01);        // 到月線停損（最小 1%）
   var oneLot = stop * PVV;
   var capMax = Math.floor(cap / MG);
-  var lots = Math.floor(cap * RISK / oneLot);
+  var full = Math.floor(cap * RISK / oneLot);  // 滿倉(風險式)
   var forced = false;
-  if (lots < 1 && capMax >= 1) { lots = 1; forced = true; }
+  if (full < 1 && capMax >= 1) { full = 1; forced = true; }
   var capped = false;
-  if (lots > capMax) { lots = capMax; capped = true; }
-  if (lots < 1) {
+  if (full > capMax) { full = capMax; capped = true; }
+  if (full < 1) {
     riskBox.textContent = "建議 0 口 · 本金不足一口保證金 NT$" + fmt(MG, 0);
-    riskBox.className = "result flat"; window.__targetLots = 0; renderHint(); return;
+    riskBox.className = "result flat";
+    bl.innerHTML = '<span style="color:var(--muted)">本金不足 1 口</span>';
+    window.__targetLots = 0; renderHint(); return;
   }
-  var realPct = oneLot * lots / cap * 100;
+  var tier = r.lots;                                    // 短線強度 1~3
+  var N = Math.max(1, Math.round(full * tier / 3));     // 進取型:依強度分批到滿倉
   var word = dir > 0 ? "口多單" : "口空單";
+  var col = dir > 0 ? "var(--red)" : "var(--green)";
+  // Section 1:現在建議持有(統一口數)
+  bl.innerHTML = '現在建議持有 <b style="color:' + col + '">' + N + '</b> ' + word;
+  // 試算卡:現在 N + 滿倉 full
   var warn = "";
-  if (forced) warn = '<div class="sub warn">⚠️ 本金小，這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
+  if (forced) warn = '<div class="sub warn">⚠️ 本金小，滿倉這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
   else if (capped) warn = '<div class="sub warn">⚠️ 已達保證金上限 ' + capMax + ' 口</div>';
-  riskBox.innerHTML = "建議 <b>" + lots + "</b> " + word +
-    '<div class="sub">到月線停損 ' + Math.round(dist) + " 點 · 一口風險 NT$" + fmt(oneLot, 0) + " · 總風險約 " + realPct.toFixed(0) + "%</div>" + warn;
+  riskBox.innerHTML = "現在建議 <b>" + N + "</b> " + word +
+    '<div class="sub">滿倉上限 ' + full + ' 口 · 短線強度 ' + tier + '/3 · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + '</div>' + warn;
   riskBox.className = "result " + (dir > 0 ? "long" : "short");
-  window.__targetLots = lots; renderHint();
+  window.__targetLots = N; renderHint();
 }
 
 function renderPos() {
