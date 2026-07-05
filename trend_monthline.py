@@ -740,6 +740,11 @@ def generate_html_report(groups, periods):
   .risk-chips button { flex:1; padding:8px 0; border-radius:8px; border:1px solid var(--line);
     background:#0E1116; color:#8B919B; font-size:13.5px; font-weight:800; cursor:pointer; transition:.15s; }
   .risk-chips button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .risk-chips .risk-custom { flex:1; min-width:0; padding:8px 4px; border-radius:8px;
+    border:1px solid var(--line); background:#0E1116; color:#E6E8EB; font-size:13px; font-weight:800; text-align:center; }
+  .risk-chips .risk-custom:focus { outline:none; border-color:var(--accent); }
+  .risk-chips .risk-custom::-webkit-outer-spin-button, .risk-chips .risk-custom::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .risk-chips .risk-custom[type=number] { -moz-appearance:textfield; }
   .risklots { margin-top:12px; padding:14px; border-radius:10px; font-weight:800; font-size:17px;
     text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.55; }
   .risklots b { font-size:26px; }
@@ -834,7 +839,8 @@ def generate_html_report(groups, periods):
       <div class="risk-row">
         <span class="risk-lab">風險</span>
         <div class="risk-chips" id="riskChips">
-          <button data-r="3">3%</button><button data-r="5">5%</button><button data-r="10">10%</button><button data-r="15">15%</button><button data-r="20">20%</button>
+          <button data-r="5">5%</button><button data-r="10">10%</button><button data-r="20">20%</button><button data-r="30">30%</button>
+          <input type="number" id="riskCustom" class="risk-custom" min="1" max="100" placeholder="自訂" inputmode="numeric">
         </div>
       </div>
       <div class="risklots" id="riskBox"></div>
@@ -882,6 +888,7 @@ const memberSel = document.getElementById("memberSel");
 const dateInput = document.getElementById("dateInput");
 const capInput = document.getElementById("capInput");
 const riskChips = document.getElementById("riskChips");
+const riskCustom = document.getElementById("riskCustom");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 
@@ -1124,20 +1131,35 @@ capInput.addEventListener("input", function () {
   renderRisk();
 });
 
-// 風險%選鈕：可選 3~20%,記住上次選擇
+// 風險%選鈕：預設 5/10/20/30% 或自訂,記住上次選擇
 var _savedRisk = null;
 try { _savedRisk = localStorage.getItem("ml_risk"); } catch (e) {}
 window.__risk = _savedRisk ? parseFloat(_savedRisk) : 10;
 var _chipBtns = riskChips.querySelectorAll("button");
+function _syncRiskUI() {
+  var matched = false;
+  Array.prototype.forEach.call(_chipBtns, function (x) {
+    var on = parseFloat(x.getAttribute("data-r")) === window.__risk;
+    x.classList.toggle("on", on); if (on) matched = true;
+  });
+  if (!matched) riskCustom.value = window.__risk; else riskCustom.value = "";
+}
 Array.prototype.forEach.call(_chipBtns, function (b) {
-  if (parseFloat(b.getAttribute("data-r")) === window.__risk) b.classList.add("on");
   b.addEventListener("click", function () {
     window.__risk = parseFloat(b.getAttribute("data-r"));
     try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {}
-    Array.prototype.forEach.call(_chipBtns, function (x) { x.classList.toggle("on", x === b); });
-    renderRisk();
+    _syncRiskUI(); renderRisk();
   });
 });
+riskCustom.addEventListener("input", function () {
+  var v = parseFloat(riskCustom.value);
+  if (!isFinite(v) || v <= 0) return;
+  window.__risk = v;
+  try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {}
+  Array.prototype.forEach.call(_chipBtns, function (x) { x.classList.remove("on"); });
+  renderRisk();
+});
+_syncRiskUI();
 
 // 預設顯示第一個頁籤的最新一天
 switchGroup(0);
