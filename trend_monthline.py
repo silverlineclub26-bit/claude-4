@@ -827,9 +827,9 @@ def generate_html_report(groups, periods):
     <div class="risk-card">
       <div class="risk-head">🧮 持有口數試算<span class="tag">台指微台 · 破月線出場</span></div>
       <div class="cap-field">
-        <span class="cap-cur">NT$</span>
-        <input type="number" id="capInput" min="10000" step="10000" value="100000" inputmode="numeric" placeholder="輸入本金">
-        <span class="cap-unit">本金</span>
+        <span class="cap-cur">本金</span>
+        <input type="number" id="capInput" min="1" step="1" value="10" inputmode="numeric" placeholder="10">
+        <span class="cap-unit">萬元</span>
       </div>
       <div class="risk-row">
         <span class="risk-lab">風險</span>
@@ -895,7 +895,7 @@ function pct(v) { return (v * 100).toFixed(0) + "%"; }
 function renderRisk() {
   var r = window.__curRec; if (!r) return;
   var box = document.getElementById("riskBox");
-  var cap = parseFloat(document.getElementById("capInput").value) || 0;
+  var cap = (parseFloat(document.getElementById("capInput").value) || 0) * 10000;   // 輸入單位=萬元
   var PV = 10, MG = 31800, RISK = (window.__risk || 10) / 100;
   var p20 = String(PERIODS[2]);
   var m20 = (r.ma_now && r.ma_now[p20] != null) ? r.ma_now[p20] : null;
@@ -1117,10 +1117,10 @@ nextBtn.addEventListener("click", function () {
 
 // 本金輸入：記住上次輸入,改動即重算(隨本金變大=複利加碼)
 var _savedCap = null;
-try { _savedCap = localStorage.getItem("ml_cap"); } catch (e) {}
+try { _savedCap = localStorage.getItem("ml_cap_wan"); } catch (e) {}
 if (_savedCap) capInput.value = _savedCap;
 capInput.addEventListener("input", function () {
-  try { localStorage.setItem("ml_cap", capInput.value); } catch (e) {}
+  try { localStorage.setItem("ml_cap_wan", capInput.value); } catch (e) {}
   renderRisk();
 });
 
