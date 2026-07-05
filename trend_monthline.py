@@ -758,7 +758,7 @@ def generate_html_report(groups, periods):
   .pos-dir button.on[data-d="1"] { background:#E5484D; color:#fff; border-color:#E5484D; }
   .pos-dir button.on[data-d="-1"] { background:#3DAE73; color:#fff; border-color:#3DAE73; }
   .pos-inputs { display:flex; gap:8px; }
-  .pos-field { flex:1; display:flex; align-items:center; gap:6px; background:#0E1116; border:1px solid var(--line);
+  .pos-field { flex:1; min-width:0; display:flex; align-items:center; gap:6px; background:#0E1116; border:1px solid var(--line);
     border-radius:10px; padding:10px 12px; }
   .pos-field:focus-within { border-color:var(--accent); }
   .pos-field input { flex:1; min-width:0; background:transparent; border:none; outline:none;
@@ -770,6 +770,13 @@ def generate_html_report(groups, periods):
     text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.55; }
   .posresult b { font-size:24px; }
   .posresult .rl-sub { font-weight:600; font-size:12.5px; color:#8B919B; }
+  .hintbox { margin-top:10px; padding:12px 14px; border-radius:10px; font-size:14.5px; font-weight:800;
+    text-align:center; border:1px solid; line-height:1.5; }
+  .hintbox b { font-size:17px; }
+  .hint-add { color:#3DA9FC; border-color:rgba(61,169,252,.5); background:rgba(61,169,252,.1); }
+  .hint-cut { color:#D4A73C; border-color:rgba(212,167,60,.5); background:rgba(212,167,60,.1); }
+  .hint-out { color:#E5484D; border-color:rgba(229,72,77,.5); background:rgba(229,72,77,.1); }
+  .hint-ok  { color:#3DAE73; border-color:rgba(61,174,115,.5); background:rgba(61,174,115,.1); }
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
@@ -875,6 +882,7 @@ def generate_html_report(groups, periods):
         <div class="pos-field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
       </div>
       <div class="posresult" id="posBox"></div>
+      <div class="hintbox" id="hintBox" style="display:none"></div>
     </div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
@@ -942,7 +950,8 @@ function renderRisk() {
   var m20 = (r.ma_now && r.ma_now[p20] != null) ? r.ma_now[p20] : null;
   var c = r.last_close;
   if (!r.lots_dir || cap <= 0 || m20 == null) {
-    box.textContent = "🧮 空手觀望 · 無建議口數"; box.className = "risklots lots-flat"; return;
+    box.textContent = "🧮 空手觀望 · 無建議口數"; box.className = "risklots lots-flat";
+    window.__targetLots = 0; renderHint(); return;
   }
   // 風險式口數 = 本金×風險% ÷ (到月線停損距離×每點值);月線=實際出場點,最小停損1%防貼線爆量
   var dist = r.lots_dir > 0 ? (c - m20) : (m20 - c);
@@ -956,7 +965,7 @@ function renderRisk() {
   if (lots > capMax) { lots = capMax; capped = true; }
   if (lots < 1) {
     box.textContent = "🧮 建議 0 口 · 本金不足一口保證金 NT$" + fmt(MG, 0);
-    box.className = "risklots lots-flat"; return;
+    box.className = "risklots lots-flat"; window.__targetLots = 0; renderHint(); return;
   }
   var realPct = oneLot * lots / cap * 100;      // 這些口數的實際風險%
   var dir = r.lots_dir > 0 ? "口多單" : "口空單";
@@ -967,6 +976,7 @@ function renderRisk() {
     '<br><span class="rl-sub">到月線停損 ' + Math.round(dist) + " 點 · 一口風險 NT$" + fmt(oneLot, 0) +
     " · 總風險約 " + realPct.toFixed(0) + "%</span>" + warn;
   box.className = "risklots " + (r.lots_dir > 0 ? "lots-long" : "lots-short");
+  window.__targetLots = lots; renderHint();
 }
 function renderPos() {
   var r = window.__curRec; if (!r) return;
@@ -994,6 +1004,42 @@ function renderPos() {
   box.innerHTML = "浮動損益 <b>" + sign + "NT$" + fmt(pnl, 0) + "</b>" +
     '<br><span class="rl-sub">' + sign + fmt(pts, 0) + " 點 · 對保證金 " + sign + pctMargin.toFixed(0) + "%" + stopLine + "</span>";
   box.className = "posresult " + col;
+  renderHint();
+}
+function renderHint() {
+  var r = window.__curRec; if (!r) return;
+  var box = document.getElementById("hintBox"); if (!box) return;
+  var cur = parseFloat(posLots.value) || 0;
+  var curDir = window.__posDir || 1;
+  var sysDir = r.lots_dir;                 // 1 多 / -1 空 / 0 空手
+  var target = window.__targetLots || 0;   // 風險式建議口數
+  if (cur <= 0) {                          // 尚無部位 → 提示可否進場
+    if (sysDir !== 0 && target > 0) {
+      box.innerHTML = "🚦 系統為" + (sysDir > 0 ? "多方" : "空方") + " · 可進場 <b>" + target + "</b> 口" + (sysDir > 0 ? "多單" : "空單");
+      box.className = "hintbox hint-add"; box.style.display = "block";
+    } else { box.style.display = "none"; }
+    return;
+  }
+  box.style.display = "block";
+  if (sysDir === 0) {
+    box.innerHTML = "🚦 系統轉<b>空手觀望</b> · 建議出場全部 " + cur + " 口";
+    box.className = "hintbox hint-out"; return;
+  }
+  if (sysDir !== curDir) {
+    box.innerHTML = "🔄 方向與系統<b>相反</b> · 建議平倉 " + cur + " 口" + (target > 0 ? "、反手 " + target + " 口" : "");
+    box.className = "hintbox hint-out"; return;
+  }
+  var diff = target - cur;
+  if (diff > 0) {
+    box.innerHTML = "🔵 建議<b>加碼 " + diff + "</b> 口　(目前 " + cur + " → 建議 " + target + ")";
+    box.className = "hintbox hint-add";
+  } else if (diff < 0) {
+    box.innerHTML = "🟠 建議<b>減碼 " + (-diff) + "</b> 口　(目前 " + cur + " → 建議 " + target + ")";
+    box.className = "hintbox hint-cut";
+  } else {
+    box.innerHTML = "✅ 部位<b>符合建議</b>(" + target + " 口)· 續抱";
+    box.className = "hintbox hint-ok";
+  }
 }
 function card(k, v, sub) {
   return '<div class="stat"><div class="stat-k">' + k + '</div>' +
