@@ -296,6 +296,12 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .nav button { width:38px; height:38px; border-radius:9px; border:1px solid var(--line);
     background:var(--card); color:var(--ink); font-size:18px; cursor:pointer; }
   .nav button:disabled { opacity:.35; }
+  .ct-row { display:flex; align-items:center; gap:10px; margin:12px 0 0; }
+  .ct-lab { font-size:12px; color:var(--muted); font-weight:800; }
+  .ct-seg { display:flex; gap:6px; flex:1; }
+  .ct-seg button { flex:1; padding:9px 0; border-radius:9px; border:1px solid var(--line);
+    background:var(--card); color:var(--muted); font-size:14px; font-weight:800; cursor:pointer; transition:.15s; }
+  .ct-seg button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
 
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
     padding:16px; margin-bottom:12px; }
@@ -386,9 +392,15 @@ _TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
 <div class="wrap">
-  <div class="eyebrow">月線系統 · 期貨專用</div>
-  <h1>台指期 月線操作系統</h1>
-  <div class="sub-note">月線定多空 · 5日/10日定強弱加碼 · 季線空頭才做空(多頭不做空) · 進取型</div>
+  <h1>PO的期貨無腦照作系統 V1.0</h1>
+  <div class="sub-note">月線定多空 · 5日/10日定強弱 · 發散加碼收斂縮手 · 季線空頭才做空 · 大賺小賠</div>
+
+  <div class="ct-row">
+    <span class="ct-lab">商品</span>
+    <div class="ct-seg" id="ctSeg">
+      <button data-c="TX">大台</button><button data-c="MTX">小台</button><button data-c="TMF">微台</button>
+    </div>
+  </div>
 
   <div class="picker">
     <label>日期</label>
@@ -432,7 +444,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
   <!-- 3. 風險策略 -->
   <div class="card" id="cardRisk">
-    <div class="card-title">🧮 風險策略<span class="tag">控管單筆風險 · 自動算口數</span><span class="caret">▾</span></div>
+    <div class="card-title">🧮 風險策略調整<span class="tag">控管單筆風險 · 自動算口數</span><span class="caret">▾</span></div>
     <div class="card-body">
       <div class="cap-field">
         <span>本金</span>
@@ -458,7 +470,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
 <script>
 const HIST = __DATA__;
-const PVV = 10, MG = 31800;
+// 三種台指期(同一指數、不同乘數):每點價值與原始保證金(約)
+const CONTRACTS = {
+  TX:  { name: "大台", pv: 200, mg: 190000 },
+  MTX: { name: "小台", pv: 50,  mg: 93500  },
+  TMF: { name: "微台", pv: 10,  mg: 31800  }
+};
+window.__ct = "TMF";
+function CT() { return CONTRACTS[window.__ct] || CONTRACTS.TMF; }
 const REGIME = {
   bull:    { label: "多頭大趨勢 · 季線上揚", cls: "rg-bull" },
   bear:    { label: "空頭大趨勢 · 季線下彎", cls: "rg-bear" },
@@ -501,10 +520,16 @@ function render(idx) {
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
+  // 箭頭數 = 收盤站上(多)/跌破(空)幾條均線：5日、10日、月線,最多 3 支
   const arrow = document.getElementById("arrowEl");
-  if (r.dir > 0) { arrow.textContent = "↑".repeat(r.lots); arrow.style.color = r.accent; }
-  else if (r.dir < 0) { arrow.textContent = "↓".repeat(r.lots); arrow.style.color = r.accent; }
-  else { arrow.textContent = ""; }
+  if (r.dir !== 0) {
+    var cnt = 0;
+    [r.ma5, r.ma10, r.ma20].forEach(function (m) {
+      if (m != null && ((r.dir > 0 && r.close >= m) || (r.dir < 0 && r.close <= m))) cnt++;
+    });
+    arrow.textContent = (r.dir > 0 ? "↑" : "↓").repeat(Math.max(1, cnt));
+    arrow.style.color = r.accent;
+  } else { arrow.textContent = ""; }
 
   document.getElementById("dateOut").textContent = r.date;
   document.getElementById("closeOut").textContent = fmt(r.close, 0);
@@ -535,6 +560,7 @@ function render(idx) {
 function renderRisk() {
   var r = window.__curRec; if (!r) return;
   var bl = document.getElementById("baseLots");
+  var PVV = CT().pv, MG = CT().mg;
   var cap = (parseFloat(capInput.value) || 0) * 10000;   // 萬元
   var RISK = (window.__risk || 10) / 100;
   var dir = r.dir, m20 = r.ma20, c = r.close;
@@ -583,6 +609,7 @@ function renderPos() {
   var r = window.__curRec; if (!r) return;
   var lots = parseFloat(posLots.value) || 0, cost = parseFloat(posCost.value) || 0, dir = window.__posDir || 1;
   if (lots <= 0 || cost <= 0) { posBox.textContent = "尚未輸入部位"; posBox.className = "result flat"; renderHint(); return; }
+  var PVV = CT().pv, MG = CT().mg;
   var c = r.close;
   var pts = (c - cost) * dir, pnl = pts * lots * PVV, pctM = pnl / (lots * MG) * 100;
   var sign = pnl >= 0 ? "+" : "";
@@ -662,6 +689,20 @@ Array.prototype.forEach.call(_db, function (b) {
 posLots.addEventListener("input", function () { try { localStorage.setItem("ml_pos_lots", posLots.value); } catch (e) {} renderPos(); });
 posCost.addEventListener("input", function () { try { localStorage.setItem("ml_pos_cost", posCost.value); } catch (e) {} renderPos(); });
 _syncPosDir();
+
+// 商品選擇(大台/小台/微台):切換後 PV、保證金、損益、口數全部跟著調整
+var ctSeg = document.getElementById("ctSeg");
+try { var _sct = localStorage.getItem("ml_ct"); if (_sct && CONTRACTS[_sct]) window.__ct = _sct; } catch (e) {}
+var _ctBtns = ctSeg.querySelectorAll("button");
+function _syncCt() { Array.prototype.forEach.call(_ctBtns, function (x) { x.classList.toggle("on", x.getAttribute("data-c") === window.__ct); }); }
+Array.prototype.forEach.call(_ctBtns, function (b) {
+  b.addEventListener("click", function () {
+    window.__ct = b.getAttribute("data-c");
+    try { localStorage.setItem("ml_ct", window.__ct); } catch (e) {}
+    _syncCt(); renderRisk(); renderPos();
+  });
+});
+_syncCt();
 
 // 區塊收放(點標題列切換,記憶狀態)
 Array.prototype.forEach.call(document.querySelectorAll(".card"), function (card) {
