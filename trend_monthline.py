@@ -131,6 +131,10 @@ STATE_META = {
                   "基本 1 口空 · 站上月線就回補", GREEN),
     "bounce_flat": ("空頭反彈 · 空手", "季線空頭大趨勢下站回月線，視為反彈。",
                     "空手觀望 · 不追多（等季線轉強）", GREY),
+    "hold_below": ("多方 · 跌破月線待確認", "收盤跌破月線但未連兩日確認，續抱多單不砍。",
+                   "續抱 · 若明日仍收月線下才出場", RED),
+    "hold_above": ("空方 · 站回月線待確認", "收盤站回月線但未連兩日確認，續抱空單不補。",
+                   "續抱空單 · 若明日仍收月線上才回補", GREEN),
     "none":      ("資料不足", "均線尚未齊備。", "觀望", GREY),
 }
 
@@ -160,6 +164,7 @@ def build_history(bars, max_days=180):
         return None if x is None else round(x, 1)
 
     recs = []
+    ml_side = None    # 月線側別(遲滯):進場即時、跌破月線需連兩日才確認出場
     for i in range(n):
         c = closes[i]
         m5, m10, m20, m60 = ma5[i], ma10[i], ma20[i], ma60[i]
@@ -204,12 +209,14 @@ def build_history(bars, max_days=180):
         # ── 發散-收斂週期(核心加碼邏輯) ──
         # 用舊系統驗證過的訊號對應週期階段(比純斜率穩):
         #   發散/糾結突破 → 發散中(大幅加碼);三線糾結/震盪 → 收斂中(不動作底倉);其餘 → 尾聲/趨緩(逐步)
-        if conv == "diverge" or triband in ("break_up", "break_dn"):
-            phase = "expand"
+        if conv == "diverge":
+            phase, plab = "expand", "均線發散 · 大幅加碼"
+        elif triband in ("break_up", "break_dn"):
+            phase, plab = "expand", "糾結突破 · 大幅加碼"
         elif triband == "coil" or conv == "chop":
-            phase = "coil"
+            phase, plab = "coil", "收斂盤整 · 不動作底倉"
         else:
-            phase = "fade"
+            phase, plab = "fade", "趨緩/尾聲 · 逐步減碼"
 
         # 季線大趨勢（做空濾網 / 標籤）：需 60 日均線與 20 根前的斜率
         m60p = ma60[i - 20] if (m60 is not None and i >= 20) else None
@@ -217,29 +224,48 @@ def build_history(bars, max_days=180):
         bull = (m60 is not None and m60p is not None and c > m60 and m60 > m60p)
         regime = "bear" if bear else ("bull" if bull else "neutral")
 
-        # 自洽狀態機：空頭大趨勢才做空；否則只做多，跌破月線空手
+        # 月線側別遲滯：站上月線當日即進;跌破月線需「連兩日」才翻(隔日確認出場)
+        ab = c >= m20
+        if ml_side is None:
+            ml_side = "above" if ab else "below"
+        elif ml_side == "above":
+            prev_below = (i >= 1 and ma20[i - 1] is not None and closes[i - 1] < ma20[i - 1])
+            if (not ab) and prev_below:            # 今、昨連兩日破月線 → 確認出場
+                ml_side = "below"
+        else:  # below
+            if ab:                                 # 站回月線當日即翻
+                ml_side = "above"
+
+        # 自洽狀態機：空頭大趨勢才做空；否則只做多；跌破月線隔日確認才出場
         if bear:
-            if c < m20:
+            if ml_side == "below":
                 d = -1
-                raw = 3 if c <= m5 else (2 if c <= m10 else 1)
-                state = "down_strong" if c <= m5 else ("down_r5" if c <= m10 else "down_r10")
+                if c > m20:                        # 站回月線但未連兩日確認 → 續抱空
+                    raw, state = 1, "hold_above"
+                else:
+                    raw = 3 if c <= m5 else (2 if c <= m10 else 1)
+                    state = "down_strong" if c <= m5 else ("down_r5" if c <= m10 else "down_r10")
             else:
                 d, raw, state = 0, 0, "bounce_flat"
         else:
-            if c >= m20:
+            if ml_side == "above":
                 d = 1
-                raw = 3 if c >= m5 else (2 if c >= m10 else 1)
-                state = "up_strong" if c >= m5 else ("up_r5" if c >= m10 else "up_r10")
+                if c < m20:                        # 跌破月線但未連兩日確認 → 續抱多
+                    raw, state = 1, "hold_below"
+                else:
+                    raw = 3 if c >= m5 else (2 if c >= m10 else 1)
+                    state = "up_strong" if c >= m5 else ("up_r5" if c >= m10 else "up_r10")
             else:
                 d, raw, state = 0, 0, "exit_flat"
 
         # ── 動態加碼(大賺小賠)：口數跟著發散-收斂週期走 ──
-        p_label, p_cls, p_tier = PHASE_META[phase]
+        _, p_cls, p_tier = PHASE_META[phase]
+        p_label = plab               # 顯示實際觸發原因(發散 or 糾結突破)
         lots = 0 if d == 0 else p_tier
 
         headline, desc, action, accent = STATE_META[state]
-        # 依週期階段覆寫建議動作
-        if d != 0:
+        # 依週期階段覆寫建議動作(待確認狀態保留自己的續抱說明)
+        if d != 0 and state not in ("hold_below", "hold_above"):
             dw = "多" if d > 0 else "空"
             if phase == "expand":
                 action = "發散中 · 大幅加碼、往滿倉（" + dw + "方）"
