@@ -1,55 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-多商品 趨勢／盤整 自動判斷系統（台指期 + 比特幣）
+台指期 月線操作系統（單一商品 · 期貨專用）
 
-抓每日開高低收 → 計算均線 / 發散度 / K 棒實體比例 / 連續小實體根數
-→ 判斷「趨勢盤 / 盤整盤 / 轉折觀察」→ 產出單一 index.html。
+判斷邏輯（前後自洽）：
+- 月線 MA20 = 多空主方向：站上做多、跌破多單出場
+- 季線 MA60 = 大趨勢濾網：只有「價在季線下且季線下彎」才允許做空；
+  多頭 / 中性大趨勢一律不做空，跌破月線就空手（避免逆勢、避免隔日大翻轉）
+- 5日 / 10日 = 短線強弱與加碼階梯（進取型：確認後 1→2→3 口）
 
-- 台指期：FinMind TaiwanFuturesDaily（免費）
-- 比特幣：Kraken 公開 OHLC API（免費、美國伺服器也可用）
-
-同一頁用頁籤切換不同商品；每個商品可用日期選擇器查歷史（逐日回推判定）。
-由 GitHub Actions 每日自動執行，index.html 推回 repo 後由 GitHub Pages 發布。
+資料：FinMind TaiwanFuturesDaily（微台 MTX，近月主力）。
+每日由 GitHub Actions 執行，index.html 推回 repo 後由 GitHub Pages 發布。
 """
 
 import os
-import sys
-import json
 import datetime
+import json
 
 import requests
 
-# ---------------------------------------------------------------------------
-# 設定
-# ---------------------------------------------------------------------------
-
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "").strip()
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
-KRAKEN_URL = "https://api.kraken.com/0/public/OHLC"
-YAHOO_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
-_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-       "(KHTML, like Gecko) Chrome/120 Safari/537.36")
 
-DELTA_EXPAND = 0.02      # 發散度趨勢：delta > 0.02 視為擴大中
-DELTA_CONTRACT = -0.02   # 發散度趨勢：delta < -0.02 視為收斂中
-
-# 要判斷的商品清單（頁籤順序即此順序）
-# 頁籤群組：每個頁籤可含多個成員（成員>1 時前端出現下拉選單）
-ASSET_GROUPS = [
-    {"key": "MTX", "name": "台指期", "members": [
-        {"key": "MTX", "name": "台指期", "kind": "futures", "id": "MTX"}]},
-    {"key": "BTC", "name": "比特幣", "members": [
-        {"key": "BTC", "name": "比特幣", "kind": "crypto", "pair": "XBTUSD"}]},
-    {"key": "US", "name": "美股", "members": [
-        {"key": "IXIC", "name": "那斯達克", "kind": "index", "symbol": "^IXIC"},
-        {"key": "SOX", "name": "費半", "kind": "index", "symbol": "^SOX"}]},
-    {"key": "STK", "name": "股票", "members": [
-        {"key": "2330", "name": "台積電 2330", "kind": "stock", "id": "2330"},
-        {"key": "3481", "name": "群創 3481", "kind": "stock", "id": "3481"},
-        {"key": "2409", "name": "友達 2409", "kind": "stock", "id": "2409"},
-        {"key": "2313", "name": "華通 2313", "kind": "stock", "id": "2313"},
-        {"key": "3227", "name": "原相 3227", "kind": "stock", "id": "3227"}]},
-]
+PV = 10          # 微台每點價值（元）
+MARGIN = 31800   # 微台原始保證金（元）
 
 
 # ---------------------------------------------------------------------------
@@ -57,10 +30,7 @@ ASSET_GROUPS = [
 # ---------------------------------------------------------------------------
 
 def fetch_futures_daily(futures_id, start_date, end_date):
-    """
-    呼叫 FinMind TaiwanFuturesDaily，回傳「一天一筆」日 K（由舊到新）。
-    同一天取一般盤、成交量最大的合約（近月主力）。
-    """
+    """呼叫 FinMind TaiwanFuturesDaily，回傳一天一筆日 K（舊到新，取當日成交量最大合約）。"""
     params = {
         "dataset": "TaiwanFuturesDaily",
         "data_id": futures_id,
@@ -85,9 +55,7 @@ def fetch_futures_daily(futures_id, start_date, end_date):
 
     rows = payload.get("data", []) or []
     if not rows:
-        raise RuntimeError(
-            "FinMind 沒有回傳任何資料（data_id=%s, %s ~ %s）。" % (futures_id, start_date, end_date)
-        )
+        raise RuntimeError("FinMind 沒有回傳任何資料（data_id=%s, %s ~ %s）。" % (futures_id, start_date, end_date))
 
     if any("trading_session" in r for r in rows):
         day_rows = [r for r in rows if str(r.get("trading_session", "")).lower() == "position"]
@@ -113,13 +81,8 @@ def fetch_futures_daily(futures_id, start_date, end_date):
     for d in sorted(best_by_date):
         r = best_by_date[d]
         try:
-            bar = {
-                "date": d,
-                "open": float(r["open"]),
-                "max": float(r["max"]),
-                "min": float(r["min"]),
-                "close": float(r["close"]),
-            }
+            bar = {"date": d, "open": float(r["open"]), "max": float(r["max"]),
+                   "min": float(r["min"]), "close": float(r["close"])}
         except (KeyError, TypeError, ValueError):
             continue
         if bar["max"] <= 0 and bar["min"] <= 0 and bar["close"] <= 0:
@@ -131,149 +94,11 @@ def fetch_futures_daily(futures_id, start_date, end_date):
     return bars
 
 
-def fetch_crypto_daily(pair="XBTUSD", interval=1440):
-    """
-    呼叫 Kraken 公開 OHLC API，回傳「一天一筆」日 K（由舊到新）。
-    interval=1440 分鐘 = 日線。回傳欄位 [time, open, high, low, close, vwap, volume, count]。
-    """
-    params = {"pair": pair, "interval": interval}
-    try:
-        resp = requests.get(KRAKEN_URL, params=params, timeout=30)
-    except requests.RequestException as e:
-        raise RuntimeError("呼叫 Kraken API 失敗：%s" % e) from e
-
-    if resp.status_code != 200:
-        raise RuntimeError("Kraken API 回傳 HTTP %s：%s" % (resp.status_code, resp.text[:300]))
-
-    payload = resp.json()
-    if payload.get("error"):
-        raise RuntimeError("Kraken API 回傳錯誤：%s" % payload["error"])
-
-    result = payload.get("result", {})
-    keys = [k for k in result if k != "last"]
-    if not keys:
-        raise RuntimeError("Kraken 回傳沒有 OHLC 資料。")
-    rows = result[keys[0]]
-
-    bars = []
-    for row in rows:
-        try:
-            ts = int(row[0])
-            d = datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
-            bar = {
-                "date": d,
-                "open": float(row[1]),
-                "max": float(row[2]),
-                "min": float(row[3]),
-                "close": float(row[4]),
-            }
-        except (IndexError, TypeError, ValueError):
-            continue
-        bars.append(bar)
-
-    if not bars:
-        raise RuntimeError("Kraken 資料整理後為空，無有效日 K。")
-    return bars
-
-
-def fetch_index_daily(symbol, rng="2y"):
-    """
-    呼叫 Yahoo Finance 圖表 API，回傳指數「一天一筆」日 K（由舊到新）。
-    symbol 例：^IXIC（那斯達克綜合）、^SOX（費城半導體）。需帶瀏覽器 User-Agent。
-    """
-    headers = {"User-Agent": _UA}
-    try:
-        resp = requests.get(YAHOO_URL + symbol, params={"range": rng, "interval": "1d"},
-                            headers=headers, timeout=30)
-    except requests.RequestException as e:
-        raise RuntimeError("呼叫 Yahoo Finance 失敗：%s" % e) from e
-
-    if resp.status_code != 200:
-        raise RuntimeError("Yahoo Finance 回傳 HTTP %s：%s" % (resp.status_code, resp.text[:200]))
-
-    payload = resp.json()
-    chart = payload.get("chart", {})
-    if chart.get("error"):
-        raise RuntimeError("Yahoo Finance 回傳錯誤：%s" % chart["error"])
-
-    results = chart.get("result") or []
-    if not results:
-        raise RuntimeError("Yahoo Finance 沒有回傳資料（symbol=%s）。" % symbol)
-    result = results[0]
-
-    ts = result.get("timestamp") or []
-    quote = (result.get("indicators", {}).get("quote") or [{}])[0]
-    opens, highs, lows, closes = (quote.get("open"), quote.get("high"),
-                                  quote.get("low"), quote.get("close"))
-    if not ts or not all([opens, highs, lows, closes]):
-        raise RuntimeError("Yahoo Finance 資料結構不完整（symbol=%s）。" % symbol)
-
-    bars = []
-    for i in range(len(ts)):
-        o, h, l, c = opens[i], highs[i], lows[i], closes[i]
-        if None in (o, h, l, c):
-            continue
-        d = datetime.datetime.fromtimestamp(int(ts[i]), datetime.timezone.utc).strftime("%Y-%m-%d")
-        bars.append({"date": d, "open": float(o), "max": float(h), "min": float(l), "close": float(c)})
-
-    if not bars:
-        raise RuntimeError("Yahoo Finance 資料整理後為空，無有效日 K。")
-    return bars
-
-
-def fetch_stock_daily(stock_id, start_date, end_date):
-    """呼叫 FinMind TaiwanStockPrice，回傳台股個股日 K（由舊到新，一天一筆）。"""
-    params = {
-        "dataset": "TaiwanStockPrice",
-        "data_id": stock_id,
-        "start_date": start_date,
-        "end_date": end_date,
-    }
-    headers = {}
-    if FINMIND_TOKEN:
-        headers["Authorization"] = "Bearer " + FINMIND_TOKEN
-
-    try:
-        resp = requests.get(FINMIND_URL, params=params, headers=headers, timeout=30)
-    except requests.RequestException as e:
-        raise RuntimeError("呼叫 FinMind（股票）失敗：%s" % e) from e
-
-    if resp.status_code != 200:
-        raise RuntimeError("FinMind 股票 API 回傳 HTTP %s：%s" % (resp.status_code, resp.text[:200]))
-
-    payload = resp.json()
-    rows = payload.get("data", []) or []
-    if not rows:
-        raise RuntimeError("FinMind 沒有回傳股票資料（data_id=%s）。" % stock_id)
-
-    bars = []
-    for r in rows:
-        try:
-            bar = {
-                "date": r["date"],
-                "open": float(r["open"]),
-                "max": float(r["max"]),
-                "min": float(r["min"]),
-                "close": float(r["close"]),
-            }
-        except (KeyError, TypeError, ValueError):
-            continue
-        if bar["max"] <= 0 and bar["min"] <= 0 and bar["close"] <= 0:
-            continue  # 停牌日
-        bars.append(bar)
-
-    bars.sort(key=lambda b: b["date"])
-    if not bars:
-        raise RuntimeError("FinMind 股票資料整理後為空，無有效日 K。")
-    return bars
-
-
 # ---------------------------------------------------------------------------
-# 指標計算
+# 指標與狀態機
 # ---------------------------------------------------------------------------
 
 def sma(values, period):
-    """簡單移動平均；前面不足週期的位置填 None。"""
     out = [None] * len(values)
     if period <= 0:
         return out
@@ -287,559 +112,199 @@ def sma(values, period):
     return out
 
 
-def analyze(bars, periods, body_thresh, streak_thresh, lookback):
-    """以 bars 的最後一根為「當日」執行趨勢／盤整判斷，回傳結果 dict。"""
-    periods = sorted(periods)
-    max_period = max(periods)
-
-    required = max_period + lookback + 2
-    if len(bars) < required:
-        raise RuntimeError(
-            "資料不足：需要至少 %d 根日 K，目前只有 %d 根。" % (required, len(bars))
-        )
-
-    closes = [b["close"] for b in bars]
-    ma_series = {p: sma(closes, p) for p in periods}
-
-    spreads = [None] * len(bars)
-    for i in range(len(bars)):
-        vals = [ma_series[p][i] for p in periods if ma_series[p][i] is not None]
-        if len(vals) == len(periods):
-            avg = sum(vals) / len(vals)
-            if avg != 0:
-                spreads[i] = (max(vals) - min(vals)) / avg * 100.0
-
-    latest_spread = spreads[-1]
-    prev_spread = spreads[-1 - lookback]
-    if latest_spread is None or prev_spread is None:
-        raise RuntimeError("發散度資料不足，無法比較趨勢。")
-    delta = latest_spread - prev_spread
-
-    if delta > DELTA_EXPAND:
-        spread_trend = "expanding"
-    elif delta < DELTA_CONTRACT:
-        spread_trend = "contracting"
-    else:
-        spread_trend = "flat"
-
-    body_ratios = []
-    for b in bars:
-        rng = b["max"] - b["min"]
-        ratio = 0.0 if rng <= 0 else abs(b["close"] - b["open"]) / rng
-        body_ratios.append(ratio)
-
-    streak = 0
-    for ratio in reversed(body_ratios):
-        if ratio < body_thresh:
-            streak += 1
-        else:
-            break
-
-    fast_p = periods[0]
-    fast_ma = ma_series[fast_p][-1]
-
-    # 徽章1「均線收斂」：5 日與 10 日（兩條最短）均線的距離，近 3 根是收斂還是發散
-    p_a, p_b = periods[0], (periods[1] if len(periods) > 1 else periods[0])
-    sa, sb = ma_series[p_a], ma_series[p_b]
-
-    # 波動：近5根平均振幅 vs 近20根平均振幅（自適應各商品），放大代表大K交替洗盤
-    ranges = [b["max"] - b["min"] for b in bars]
-    vol_recent = sum(ranges[-5:]) / min(5, len(ranges))
-    vol_base = sum(ranges[-20:]) / min(20, len(ranges))
-    choppy = vol_base > 0 and vol_recent > 1.2 * vol_base
-
-    conv, conv_label = "flat", "—"
-    if (len(sa) > 3 and sa[-1] is not None and sb[-1] is not None
-            and sa[-4] is not None and sb[-4] is not None):
-        dist_now = abs(sa[-1] - sb[-1])
-        dist_ref = abs(sa[-4] - sb[-4])
-        if dist_now < dist_ref:
-            # 收斂細分：高波動洗盤 → 震盪；低波動 → 盤整
-            if choppy:
-                conv, conv_label = "chop", "震盪"
-            else:
-                conv, conv_label = "range", "盤整"
-        else:
-            conv, conv_label = "diverge", "發散"
-
-    # 型態／發散方向：以 MA5 相對 MA10（兩條短均）在上或下決定（空頭發散→綠）
-    if sa[-1] is not None and sb[-1] is not None and sa[-1] != sb[-1]:
-        conv_dir = "up" if sa[-1] > sb[-1] else "down"
-    else:
-        conv_dir = "flat"
-
-    # 徽章2「短線方向」：跌破5日且為實體黑K → 偏空；站上5日 → 偏多；其餘 → 中性
-    last_open = bars[-1]["open"]
-    last_close = closes[-1]
-    is_black_solid = (last_close < last_open) and (body_ratios[-1] >= 0.5)
-    if fast_ma is None:
-        momentum, momentum_label = "flat", "中性"
-    elif last_close > fast_ma:
-        momentum, momentum_label = "up", "偏多"
-    elif last_close < fast_ma and is_black_solid:
-        momentum, momentum_label = "down", "偏空"
-    else:
-        momentum, momentum_label = "flat", "中性"
-
-    # 三線訊號：收盤相對三條短期均線（取最短三條）位置 + 均線糾結後突破
-    triband, triband_label = "mix", "中性"
-    if len(periods) >= 3:
-        q1, q2, q3 = periods[0], periods[1], periods[2]
-        s1, s2, s3 = ma_series[q1], ma_series[q2], ma_series[q3]
-        if s1[-1] is not None and s2[-1] is not None and s3[-1] is not None:
-            m1, m2, m3 = s1[-1], s2[-1], s3[-1]
-            sp3 = []
-            for i in range(len(bars)):
-                v1, v2, v3 = s1[i], s2[i], s3[i]
-                if None in (v1, v2, v3) or bars[i]["close"] == 0:
-                    continue
-                sp3.append((max(v1, v2, v3) - min(v1, v2, v3)) / bars[i]["close"] * 100)
-            base = sum(sp3[-20:]) / len(sp3[-20:]) if sp3 else None
-            recent_tight = base is not None and base > 0 and any(v < 0.6 * base for v in sp3[-5:])
-            cur_tight = base is not None and base > 0 and sp3 and sp3[-1] < 0.6 * base
-            cl = closes[-1]
-            above = cl > m1 and cl > m2 and cl > m3
-            below = cl < m1 and cl < m2 and cl < m3
-            if above and recent_tight:
-                triband, triband_label = "break_up", "糾結突破↑"
-            elif below and recent_tight:
-                triband, triband_label = "break_dn", "糾結跌破↓"
-            elif above:
-                triband, triband_label = "above", "站上三線"
-            elif below:
-                triband, triband_label = "below", "跌破三線"
-            elif cur_tight:
-                triband, triband_label = "coil", "均線糾結"
-            else:
-                triband, triband_label = "mix", "中性"
-
-    # 趨勢盤的方向：MA5 相對 MA60 的排列（之上多方、之下空方）
-    slow_ma = ma_series[periods[-1]][-1]
-    if fast_ma is not None and slow_ma is not None and fast_ma != slow_ma:
-        trend_dir = "long" if fast_ma > slow_ma else "short"
-    else:
-        trend_dir = "flat"
-
-    if spread_trend == "expanding" and streak < 2:
-        verdict = "trend"
-        if trend_dir == "long":
-            verdict_label = "多方趨勢"
-            verdict_desc = ("均線間距擴大且呈多頭排列（MA%d 在 MA%d 之上），"
-                            "無連續小實體 K 棒，順勢偏多操作。" % (fast_p, periods[-1]))
-        elif trend_dir == "short":
-            verdict_label = "空方趨勢"
-            verdict_desc = ("均線間距擴大且呈空頭排列（MA%d 在 MA%d 之下），"
-                            "無連續小實體 K 棒，順勢偏空操作。" % (fast_p, periods[-1]))
-        else:
-            verdict_label = "趨勢盤"
-            verdict_desc = "均線間距正在擴大，且沒有連續小實體 K 棒，適合波段順勢邏輯操作。"
-    elif spread_trend == "contracting" and streak >= streak_thresh:
-        verdict = "range"
-        verdict_label = "盤整盤"
-        verdict_desc = (
-            "均線間距正在收斂，且已連續 %d 根實體比例低於警戒值，"
-            "建議縮小部位或改用高賣低買區間邏輯。" % streak
-        )
-    else:
-        verdict = "watch"
-        verdict_label = "轉折觀察"
-        verdict_desc = "訊號不一致，建議先縮小部位試單。"
-
-    # 強訊號箭頭：三個條件（方向趨勢 / 均線發散 / 短線同向）累計，滿足 2 項給 1 箭頭、3 項給 2 箭頭
-    up_conds = ((1 if (verdict == "trend" and trend_dir == "long") else 0)
-                + (1 if conv == "diverge" else 0)
-                + (1 if momentum == "up" else 0))
-    down_conds = ((1 if (verdict == "trend" and trend_dir == "short") else 0)
-                  + (1 if conv == "diverge" else 0)
-                  + (1 if momentum == "down" else 0))
-    if up_conds > down_conds and up_conds >= 2:
-        signal_dir, n = "up", up_conds
-    elif down_conds > up_conds and down_conds >= 2:
-        signal_dir, n = "down", down_conds
-    else:
-        signal_dir, n = "none", 0
-    signal_n = 2 if n >= 3 else (1 if n == 2 else 0)
-
-    # 操作建議：趨勢還在→續抱（順勢抱單）；趨勢不在→短做（縮部位、快進快出）
-    if verdict == "trend" and trend_dir in ("long", "short"):
-        side = "多單" if trend_dir == "long" else "空單"
-        action = "hold_long" if trend_dir == "long" else "hold_short"
-        if conv == "converge":
-            action_label = "趨勢還在但轉弱 · 續抱%s、可分批減碼" % side
-        else:
-            action_label = "趨勢還在 · 續抱%s" % side
-    else:
-        action = "scalp"
-        action_label = "趨勢不在 · 短做（快進快出、縮小部位）"
-
-    recent_n = min(16, len(bars))
-    recent_bodies = [
-        {"date": bars[i]["date"], "ratio": round(body_ratios[i], 3)}
-        for i in range(len(bars) - recent_n, len(bars))
-    ]
-
-    ma_now = {p: ma_series[p][-1] for p in periods}
-    last = bars[-1]
-    return {
-        "verdict": verdict,
-        "verdict_label": verdict_label,
-        "verdict_desc": verdict_desc,
-        "conv": conv,
-        "conv_label": conv_label,
-        "conv_dir": conv_dir,
-        "momentum": momentum,
-        "momentum_label": momentum_label,
-        "triband": triband,
-        "triband_label": triband_label,
-        "trend_dir": trend_dir,
-        "signal_dir": signal_dir,
-        "signal_n": signal_n,
-        "action": action,
-        "action_label": action_label,
-        "last_date": last["date"],
-        "last_close": round(last["close"], 2),
-        "spread_now": round(latest_spread, 3),
-        "spread_prev": round(prev_spread, 3),
-        "spread_delta": round(delta, 3),
-        "spread_trend": spread_trend,
-        "lookback": lookback,
-        "streak": streak,
-        "streak_thresh": streak_thresh,
-        "body_thresh": body_thresh,
-        "ma_now": {str(p): (round(ma_now[p], 2) if ma_now[p] is not None else None) for p in periods},
-        "recent_bodies": recent_bodies,
-    }
-
-
-# 持續性趨勢狀態表：state → (標題, 說明, 操作建議, 主色, 橫幅樣式)
-_STATE_META = {
-    # 月線之上 = 多方（破月線才出場）
-    "up_strong": ("多方趨勢", "收盤站上月線、且站穩5日，多方最強，續抱多單。",
-                  "續抱多單（破月線才出）", "#E5484D", "act-hold-long"),
-    "up_r5":     ("多方趨勢", "站上月線、跌破5日守10日，多方整理，續抱。",
-                  "破5日整理 · 續抱多單", "#E5484D", "act-hold-long"),
-    "up_r10":    ("多方趨勢", "站上月線、跌破10日但仍守月線，多方轉弱，仍續抱到月線。",
-                  "破10日轉弱 · 仍守月線續抱", "#E5484D", "act-hold-long"),
-    # 月線之下 = 空方 → 純多方策略:多單出場、空手觀望(回測顯示台指做空拖累報酬、放大回檔)
-    "down_strong": ("空方趨勢", "收盤跌破月線，多單出場、空手觀望(不建議做空)。",
-                    "跌破月線 · 多單出場、空手觀望", "#3DAE73", "act-hold-short"),
-    "down_r5":   ("空方趨勢", "跌破月線後反彈站上5日，仍在月線下、空手觀望。",
-                  "月線下反彈 · 空手觀望", "#3DAE73", "act-hold-short"),
-    "down_r10":  ("空方趨勢", "跌破月線後反彈站上10日，仍在月線下、空手觀望。",
-                  "月線下反彈 · 空手觀望", "#3DAE73", "act-hold-short"),
-    "none":      ("資料不足", "月線尚未成形。", "觀望", "#8B919B", "act-scalp"),
+# 狀態鍵 → (標題, 說明, 建議動作, 主色)  漲紅跌綠
+RED, GREEN, GREY = "#E5484D", "#3DAE73", "#8B919B"
+STATE_META = {
+    "up_strong": ("多方強勢", "站上月線，且站上 5 日 / 10 日，短線最強。",
+                  "滿倉續抱 · 站穩就加碼到 3 口", RED),
+    "up_r5":     ("多方（回檔 5 日）", "站上月線與 10 日、跌破 5 日，短線小回。",
+                  "持有 2 口 · 站回 5 日再加碼", RED),
+    "up_r10":    ("多方轉弱", "站上月線但跌破 10 日，短線走弱。",
+                  "基本 1 口 · 跌破月線就出場", RED),
+    "exit_flat": ("跌破月線 · 空手", "跌破月線、多單出場；大趨勢非空頭，不做空。",
+                  "空手觀望 · 站回月線再進多", GREY),
+    "down_strong": ("空方強勢", "季線空頭確認，且跌破 5 日 / 10 日，短線最弱。",
+                    "滿倉空單續抱 · 續弱加碼到 3 口", GREEN),
+    "down_r5":   ("空方（回彈 10 日）", "季線空頭、站回 10 日仍在月線下，小反彈。",
+                  "持有 2 口空 · 再破 5 日加碼", GREEN),
+    "down_r10":  ("空方轉弱", "季線空頭但接近月線，空方轉弱。",
+                  "基本 1 口空 · 站上月線就回補", GREEN),
+    "bounce_flat": ("空頭反彈 · 空手", "季線空頭大趨勢下站回月線，視為反彈。",
+                    "空手觀望 · 不追多（等季線轉強）", GREY),
+    "none":      ("資料不足", "均線尚未齊備。", "觀望", GREY),
 }
 
 
-def build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=180):
-    """月線系統：月線(20日)定多空、破月線出場、站上10日/5日順勢加碼(上限3口)。"""
-    periods = sorted(periods)
-    required = max(periods) + lookback + 2
-    records = []
-    for i in range(required - 1, len(bars)):
-        try:
-            records.append(analyze(bars[:i + 1], periods, body_thresh, streak_thresh, lookback))
-        except RuntimeError:
+def build_history(bars, max_days=180):
+    closes = [b["close"] for b in bars]
+    ma5, ma10, ma20 = sma(closes, 5), sma(closes, 10), sma(closes, 20)
+    ma60, ma240 = sma(closes, 60), sma(closes, 240)
+    n = len(bars)
+
+    def _r(x):
+        return None if x is None else round(x, 1)
+
+    recs = []
+    for i in range(n):
+        c = closes[i]
+        m5, m10, m20, m60 = ma5[i], ma10[i], ma20[i], ma60[i]
+        if m20 is None or m5 is None or m10 is None:
             continue
 
-    # 月線系統：月線(第3短均,預設20日)之上=多方、之下=空方；破月線出場；站上10日/5日加碼(上限3)
-    # ATR(20日平均振幅,點)供風險式口數試算
-    _atr = {}
-    for i in range(len(bars)):
-        if i >= 20:
-            _atr[bars[i]["date"]] = sum(bars[j]["max"] - bars[j]["min"] for j in range(i - 19, i + 1)) / 20.0
+        # 季線大趨勢（做空濾網 / 標籤）：需 60 日均線與 20 根前的斜率
+        m60p = ma60[i - 20] if (m60 is not None and i >= 20) else None
+        bear = (m60 is not None and m60p is not None and c < m60 and m60 < m60p)
+        bull = (m60 is not None and m60p is not None and c > m60 and m60 > m60p)
+        regime = "bear" if bear else ("bull" if bull else "neutral")
 
-    p5 = str(periods[0])
-    p10 = str(periods[1]) if len(periods) > 1 else str(periods[0])
-    p20 = str(periods[2]) if len(periods) > 2 else p10
-    p60 = str(periods[3]) if len(periods) > 3 else p20   # 季線,空頭確認用
-    prev_below5 = prev_below10 = False   # 前一日收盤是否在5/10日之下
-    prev_above5 = prev_above10 = False   # 前一日收盤是否在5/10日之上
-    up_units = dn_units = 0               # 本波加碼口數(顯示用,上限3)
-    for idx, rec in enumerate(records):
-        c = rec["last_close"]
-        m5 = rec["ma_now"].get(p5)
-        m10 = rec["ma_now"].get(p10)
-        m20 = rec["ma_now"].get(p20)
-        m60 = rec["ma_now"].get(p60)
-        add_signal = "none"
-
-        # 季線空頭確認：收盤跌破季線 且 季線下彎(比20根前低)→ 才允許做空
-        bear = False
-        if m60 is not None and idx >= 20:
-            m60_prev = records[idx - 20]["ma_now"].get(p60)
-            if m60_prev is not None and c < m60 and m60 < m60_prev:
-                bear = True
-
-        if m20 is None or m5 is None or m10 is None:
-            state = "none"
-        elif c >= m20:                    # 站上月線 = 多方
-            if c >= m5:
-                state = "up_strong"
-            elif c >= m10:
-                state = "up_r5"
+        # 自洽狀態機：空頭大趨勢才做空；否則只做多，跌破月線空手
+        if bear:
+            if c < m20:
+                d = -1
+                lots = 3 if c <= m5 else (2 if c <= m10 else 1)
+                state = "down_strong" if c <= m5 else ("down_r5" if c <= m10 else "down_r10")
             else:
-                state = "up_r10"
-            # 加碼：從下方站回5日 或 站回10日，上限3口
-            if up_units < 3 and prev_below5 and c >= m5:
-                add_signal = "add_long"; up_units += 1
-            elif up_units < 3 and prev_below10 and c >= m10:
-                add_signal = "add_long"; up_units += 1
-            dn_units = 0                  # 換到多方 → 重置空方口數
-        else:                             # 跌破月線 = 空方
-            if c <= m5:
-                state = "down_strong"
-            elif c <= m10:
-                state = "down_r5"
+                d, lots, state = 0, 0, "bounce_flat"
+        else:
+            if c >= m20:
+                d = 1
+                lots = 3 if c >= m5 else (2 if c >= m10 else 1)
+                state = "up_strong" if c >= m5 else ("up_r5" if c >= m10 else "up_r10")
             else:
-                state = "down_r10"
-            up_units = 0
+                d, lots, state = 0, 0, "exit_flat"
 
-        headline, desc, act_label, accent, act_class = _STATE_META[state]
-        rec["state"] = state
-        rec["state_label"] = headline
-        rec["state_desc"] = desc
-        rec["action_label"] = act_label
-        rec["accent"] = accent
-        rec["action_class"] = act_class
-
-        rec["add_signal"] = add_signal
-        rec["add_label"] = ("順勢加碼多單" if add_signal == "add_long" else "")
-
-        # 建議口數 + 箭頭:多方1-3口多;空頭確認(破季線)才1-3口空;破月線但非空頭→空手
-        if state.startswith("up"):
-            lots = {"up_strong": 3, "up_r5": 2, "up_r10": 1}[state]
-            rec["arrow_dir"] = "up"
-            rec["arrow_n"] = (1 if c >= m5 else 0) + (1 if c >= m10 else 0)
-            rec["lots"] = lots
-            rec["lots_label"] = "建議持有 %d 口多單" % lots
-        elif state.startswith("down") and bear:      # 季線空頭確認 → 做空
-            lots = {"down_strong": 3, "down_r5": 2, "down_r10": 1}[state]
-            rec["arrow_dir"] = "down"
-            rec["arrow_n"] = (1 if c <= m5 else 0) + (1 if c <= m10 else 0)
-            rec["lots"] = lots
-            rec["lots_label"] = "建議持有 %d 口空單" % lots
-            rec["action_label"] = "季線空頭確認 · 做空 %d 口" % lots
-        else:                                         # 破月線但非空頭確認 / 資料不足 → 空手
-            rec["arrow_dir"], rec["arrow_n"] = "none", 0
-            rec["lots"] = 0
-            rec["lots_label"] = "空手觀望(0口)"
-            if state.startswith("down"):
-                rec["action_label"] = "跌破月線 · 多單出場、空手觀望(非空頭年不做空)"
-
-        rec["atr"] = round(_atr.get(rec["last_date"], 0.0), 1)
-        rec["lots_dir"] = 1 if state.startswith("up") else (-1 if (state.startswith("down") and bear) else 0)
-
-        prev_below5 = (m5 is not None and c < m5)
-        prev_below10 = (m10 is not None and c < m10)
-        prev_above5 = (m5 is not None and c > m5)
-        prev_above10 = (m10 is not None and c > m10)
-
-    if max_days and len(records) > max_days:
-        records = records[-max_days:]
-    return records
+        headline, desc, action, accent = STATE_META[state]
+        recs.append({
+            "date": bars[i]["date"], "close": round(c, 0),
+            "ma5": _r(m5), "ma10": _r(m10), "ma20": _r(m20),
+            "ma60": _r(m60), "ma240": _r(ma240[i]),
+            "regime": regime, "dir": d, "lots": lots, "state": state,
+            "headline": headline, "desc": desc, "action": action, "accent": accent,
+        })
+    return recs[-max_days:]
 
 
 # ---------------------------------------------------------------------------
-# 產生 HTML 報告（多商品頁籤 + JS 日期選擇器）
+# HTML 產出
 # ---------------------------------------------------------------------------
 
-def generate_html_report(groups, periods):
-    """groups: list[{key, name, members:[{key,name,history}]}]。單頁：頁籤 + (多成員時)下拉 + 日期選擇器。"""
-    gen_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    data_json = json.dumps(groups, ensure_ascii=False)
-    periods_json = json.dumps(sorted(periods))
+def generate_html(records, gen_time):
+    data_json = json.dumps(records, ensure_ascii=False)
+    html = _TEMPLATE.replace("__DATA__", data_json).replace("__GEN__", gen_time)
+    return html
 
-    html = """<!doctype html>
+
+_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>月線趨勢系統</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<title>台指期 月線操作系統</title>
 <style>
-  :root {
-    --bg:#0B0D10; --panel:#14171C; --line:#262B33;
-    --text:#EDEAE3; --muted:#8B919B; --accent:#8B919B;
-    --up:#3DAE73; --down:#E5484D;
-  }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:var(--bg); color:var(--text);
-    font-family:"Noto Sans TC",-apple-system,sans-serif;
-    -webkit-font-smoothing:antialiased; line-height:1.5; padding:24px 16px 40px; }
-  .wrap { width:100%; max-width:960px; margin:0 auto; }
-  .mono { font-family:"IBM Plex Mono",monospace; }
+  :root { --bg:#0B0D10; --card:#12151A; --line:#242A31; --ink:#E6E8EB; --muted:#8B919B;
+    --accent:#E5484D; --red:#E5484D; --green:#3DAE73; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC",sans-serif;
+    line-height:1.5; padding:0 0 40px; }
+  .wrap { max-width:520px; margin:0 auto; padding:16px 14px; }
+  h1 { font-size:19px; font-weight:800; margin:6px 0 2px; letter-spacing:.5px; }
+  .eyebrow { font-size:12px; color:var(--muted); font-weight:700; letter-spacing:1px; }
+  .sub-note { font-size:11.5px; color:var(--muted); margin-top:4px; line-height:1.6; }
 
-  .eyebrow { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.18em;
-    color:var(--muted); text-transform:uppercase; }
-  h1 { font-size:22px; font-weight:700; margin:6px 0 16px; letter-spacing:.02em; }
+  .picker { display:flex; align-items:center; gap:8px; margin:14px 0 10px; }
+  .picker label { font-size:12px; color:var(--muted); font-weight:700; }
+  .picker input[type=date] { flex:1; padding:9px 11px; border-radius:9px; border:1px solid var(--line);
+    background:var(--card); color:var(--ink); font-size:14px; }
+  .nav { display:flex; gap:6px; }
+  .nav button { width:38px; height:38px; border-radius:9px; border:1px solid var(--line);
+    background:var(--card); color:var(--ink); font-size:18px; cursor:pointer; }
+  .nav button:disabled { opacity:.35; }
 
-  .tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
-  .tab { flex:1 1 0; min-width:64px; text-align:center; padding:11px 6px; border:1px solid var(--line);
-    border-radius:9px; background:var(--panel); color:var(--muted); font-size:14px;
-    font-weight:500; cursor:pointer; user-select:none; white-space:nowrap;
-    transition:color .12s,border-color .12s; }
-  .tab.active { color:var(--text); border-color:var(--accent);
-    box-shadow:inset 0 0 0 1px var(--accent); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
+    padding:16px; margin-bottom:12px; }
+  .card-title { font-size:12.5px; font-weight:800; color:var(--muted); letter-spacing:.6px;
+    display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .tag { font-size:10.5px; font-weight:700; padding:2px 8px; border-radius:999px; border:1px solid var(--line); }
 
-  .member-sel { width:100%; margin-bottom:16px; background:var(--panel); color:var(--text);
-    border:1px solid var(--line); border-radius:8px; padding:11px 12px;
-    font-family:"Noto Sans TC",sans-serif; font-size:15px; -webkit-appearance:none; appearance:none;
-    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238B919B' stroke-width='1.5' fill='none'/></svg>");
-    background-repeat:no-repeat; background-position:right 12px center; }
-  .picker { display:flex; align-items:center; gap:10px; margin-bottom:16px; }
-  .picker label { font-size:12px; color:var(--muted); white-space:nowrap; }
-  .picker input[type=date] { flex:1; min-width:0; background:var(--panel); color:var(--text);
-    border:1px solid var(--line); border-radius:8px; padding:10px 12px;
-    font-family:"IBM Plex Mono",monospace; font-size:14px; }
-  .picker input[type=date]::-webkit-calendar-picker-indicator { filter:invert(.65); cursor:pointer; }
-  .nav { display:flex; gap:8px; }
-  .nav button { background:var(--panel); color:var(--text); border:1px solid var(--line);
-    border-radius:8px; width:40px; height:40px; font-size:16px; cursor:pointer; }
-  .nav button:disabled { opacity:.35; cursor:default; }
+  /* 盤勢建議 hero */
+  .regime { display:inline-block; font-size:12px; font-weight:800; padding:4px 11px; border-radius:999px;
+    border:1px solid; margin-bottom:10px; }
+  .rg-bull { color:var(--red); border-color:rgba(229,72,77,.5); background:rgba(229,72,77,.08); }
+  .rg-bear { color:var(--green); border-color:rgba(61,174,115,.5); background:rgba(61,174,115,.08); }
+  .rg-neutral { color:var(--muted); border-color:var(--line); }
+  .headline { font-size:27px; font-weight:900; letter-spacing:.5px; display:flex; align-items:center; gap:10px; }
+  .arrow { font-size:22px; font-weight:900; }
+  .metaline { font-size:12.5px; color:var(--muted); margin-top:6px; }
+  .metaline b { color:var(--ink); font-variant-numeric:tabular-nums; }
+  .desc { font-size:13.5px; color:#C2C7CE; margin-top:12px; }
+  .action { margin-top:12px; padding:13px 14px; border-radius:10px; font-weight:800; font-size:15.5px; text-align:center;
+    border:1px solid; }
+  .act-long { color:var(--red); border-color:rgba(229,72,77,.45); background:rgba(229,72,77,.1); }
+  .act-short { color:var(--green); border-color:rgba(61,174,115,.45); background:rgba(61,174,115,.1); }
+  .act-flat { color:var(--muted); border-color:var(--line); background:rgba(139,145,155,.08); }
+  .baselots { margin-top:10px; font-size:15px; font-weight:800; text-align:center; }
 
-  .meta { display:flex; flex-wrap:wrap; gap:6px 16px; font-family:"IBM Plex Mono",monospace;
-    font-size:12px; color:var(--muted); margin-bottom:18px; }
-  .meta b { color:var(--text); font-weight:500; }
-  .latest-badge { color:var(--up); }
-  .hist-badge { color:var(--muted); }
+  .levels { display:grid; grid-template-columns:repeat(5,1fr); gap:6px; margin-top:14px; }
+  .lv { background:#0E1116; border:1px solid var(--line); border-radius:9px; padding:8px 4px; text-align:center; }
+  .lv-k { font-size:10.5px; color:var(--muted); font-weight:700; }
+  .lv-v { font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; margin-top:2px; }
+  .lv.up .lv-v { color:var(--red); } .lv.down .lv-v { color:var(--green); }
 
-  .verdict { background:var(--panel); border:1px solid var(--line);
-    border-left:4px solid var(--accent); border-radius:12px; padding:22px 20px; margin-bottom:20px; }
-  .verdict-tag { font-family:"IBM Plex Mono",monospace; font-size:12px; letter-spacing:.14em;
-    color:var(--muted); text-transform:uppercase; }
-  .verdict-tagrow { display:flex; align-items:center; gap:12px; }
-  .verdict-title { font-size:34px; font-weight:700; color:var(--accent); letter-spacing:.03em; margin:6px 0 12px; }
-  .signal-arrow { font-size:26px; font-weight:800; line-height:1; }
-  .sig-up { color:#E5484D; }
-  .sig-down { color:#3DAE73; }
-  .verdict-desc { font-size:14.5px; color:var(--text); }
-  .lots { margin-top:10px; padding:14px; border-radius:8px; font-weight:800; font-size:20px;
-    text-align:center; border:1px solid var(--line); background:#14171C; }
-  .lots-long { color:#E5484D; } .lots-short { color:#3DAE73; } .lots-flat { color:#8B919B; }
-  .risk-card { margin-top:10px; padding:14px; border-radius:12px; border:1px solid var(--line);
-    background:linear-gradient(180deg,#161A20,#12151A); }
-  .risk-head { font-size:12.5px; font-weight:800; color:#B7BDC6; letter-spacing:.6px;
-    margin-bottom:11px; display:flex; align-items:center; gap:8px; }
-  .risk-head .tag { font-size:10.5px; font-weight:700; color:#8B919B; border:1px solid var(--line);
-    padding:2px 8px; border-radius:999px; }
-  .cap-field { display:flex; align-items:center; gap:8px; background:#0E1116; border:1px solid var(--line);
-    border-radius:10px; padding:11px 13px; transition:border-color .15s; }
-  .cap-field:focus-within { border-color:var(--accent); }
-  .cap-cur { font-size:15px; font-weight:800; color:#8B919B; }
-  .cap-field input { flex:1; min-width:0; background:transparent; border:none; outline:none;
-    color:#E6E8EB; font-size:23px; font-weight:800; text-align:right; letter-spacing:.5px; }
-  .cap-field input::-webkit-outer-spin-button, .cap-field input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  .cap-field input[type=number] { -moz-appearance:textfield; }
-  .cap-unit { font-size:12.5px; color:#8B919B; font-weight:700; }
+  /* 輸入卡共用 */
+  .field, .cap-field { display:flex; align-items:center; gap:8px; background:#0E1116; border:1px solid var(--line);
+    border-radius:10px; padding:11px 13px; }
+  .field:focus-within, .cap-field:focus-within { border-color:var(--accent); }
+  .field span, .cap-field span { font-size:12.5px; color:var(--muted); font-weight:700; white-space:nowrap; }
+  .field input, .cap-field input { flex:1; min-width:0; background:transparent; border:none; outline:none;
+    color:var(--ink); font-size:20px; font-weight:800; text-align:right; }
+  input[type=number]::-webkit-outer-spin-button, input[type=number]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  input[type=number] { -moz-appearance:textfield; }
+
+  .dir-toggle { display:flex; gap:6px; margin-bottom:10px; }
+  .dir-toggle button { flex:1; padding:9px 0; border-radius:8px; border:1px solid var(--line);
+    background:#0E1116; color:var(--muted); font-size:14px; font-weight:800; cursor:pointer; transition:.15s; }
+  .dir-toggle button.on[data-d="1"] { background:var(--red); color:#fff; border-color:var(--red); }
+  .dir-toggle button.on[data-d="-1"] { background:var(--green); color:#fff; border-color:var(--green); }
+  .row2 { display:flex; gap:8px; }
+  .row2 .field { flex:1; min-width:0; }
+
+  .result { margin-top:12px; padding:14px; border-radius:10px; font-weight:800; font-size:16px;
+    text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.5; }
+  .result b { font-size:25px; }
+  .result .sub { font-weight:600; font-size:12.5px; color:var(--muted); margin-top:4px; }
+  .result .sub.warn { color:#D4A73C; font-weight:700; }
+  .result.long { color:var(--red); } .result.short { color:var(--green); } .result.flat { color:var(--muted); }
+
   .risk-row { display:flex; align-items:center; gap:10px; margin-top:10px; }
-  .risk-lab { font-size:12.5px; font-weight:800; color:#8B919B; white-space:nowrap; }
-  .risk-chips { display:flex; gap:6px; flex:1; }
-  .risk-chips button { flex:1; padding:8px 0; border-radius:8px; border:1px solid var(--line);
-    background:#0E1116; color:#8B919B; font-size:13.5px; font-weight:800; cursor:pointer; transition:.15s; }
-  .risk-chips button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .risk-chips .risk-custom { flex:1; min-width:0; padding:8px 4px; border-radius:8px;
-    border:1px solid var(--line); background:#0E1116; color:#E6E8EB; font-size:13px; font-weight:800; text-align:center; }
-  .risk-chips .risk-custom:focus { outline:none; border-color:var(--accent); }
-  .risk-chips .risk-custom::-webkit-outer-spin-button, .risk-chips .risk-custom::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  .risk-chips .risk-custom[type=number] { -moz-appearance:textfield; }
-  .risklots { margin-top:12px; padding:14px; border-radius:10px; font-weight:800; font-size:17px;
-    text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.55; }
-  .risklots b { font-size:26px; }
-  .risklots .rl-sub { font-weight:600; font-size:12.5px; color:#8B919B; }
-  .risklots .rl-warn { font-weight:700; font-size:12.5px; color:#D4A73C; }
-  .pos-card { margin-top:10px; padding:14px; border-radius:12px; border:1px solid var(--line);
-    background:linear-gradient(180deg,#161A20,#12151A); }
-  .pos-dir { display:flex; gap:6px; margin-bottom:10px; }
-  .pos-dir button { flex:1; padding:9px 0; border-radius:8px; border:1px solid var(--line);
-    background:#0E1116; color:#8B919B; font-size:14px; font-weight:800; cursor:pointer; transition:.15s; }
-  .pos-dir button.on[data-d="1"] { background:#E5484D; color:#fff; border-color:#E5484D; }
-  .pos-dir button.on[data-d="-1"] { background:#3DAE73; color:#fff; border-color:#3DAE73; }
-  .pos-inputs { display:flex; gap:8px; }
-  .pos-field { flex:1; min-width:0; display:flex; align-items:center; gap:6px; background:#0E1116; border:1px solid var(--line);
-    border-radius:10px; padding:10px 12px; }
-  .pos-field:focus-within { border-color:var(--accent); }
-  .pos-field input { flex:1; min-width:0; background:transparent; border:none; outline:none;
-    color:#E6E8EB; font-size:19px; font-weight:800; text-align:right; }
-  .pos-field input::-webkit-outer-spin-button, .pos-field input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
-  .pos-field input[type=number] { -moz-appearance:textfield; }
-  .pos-field span { font-size:12.5px; color:#8B919B; font-weight:700; white-space:nowrap; }
-  .posresult { margin-top:12px; padding:14px; border-radius:10px; font-weight:800; font-size:16px;
-    text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.55; }
-  .posresult b { font-size:24px; }
-  .posresult .rl-sub { font-weight:600; font-size:12.5px; color:#8B919B; }
-  .hintbox { margin-top:10px; padding:12px 14px; border-radius:10px; font-size:14.5px; font-weight:800;
+  .risk-lab { font-size:12.5px; font-weight:800; color:var(--muted); }
+  .chips { display:flex; gap:6px; flex:1; }
+  .chips button { flex:1; padding:8px 0; border-radius:8px; border:1px solid var(--line);
+    background:#0E1116; color:var(--muted); font-size:13.5px; font-weight:800; cursor:pointer; transition:.15s; }
+  .chips button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .chips .custom { flex:1; min-width:0; padding:8px 4px; border-radius:8px; border:1px solid var(--line);
+    background:#0E1116; color:var(--ink); font-size:13px; font-weight:800; text-align:center; }
+  .chips .custom:focus { outline:none; border-color:var(--accent); }
+
+  .hint { margin-top:10px; padding:12px 14px; border-radius:10px; font-size:14.5px; font-weight:800;
     text-align:center; border:1px solid; line-height:1.5; }
-  .hintbox b { font-size:17px; }
-  .hint-add { color:#3DA9FC; border-color:rgba(61,169,252,.5); background:rgba(61,169,252,.1); }
-  .hint-cut { color:#D4A73C; border-color:rgba(212,167,60,.5); background:rgba(212,167,60,.1); }
-  .hint-out { color:#3DAE73; border-color:rgba(61,174,115,.5); background:rgba(61,174,115,.1); }
-  .hint-ok  { color:#E5484D; border-color:rgba(229,72,77,.5); background:rgba(229,72,77,.1); }
-  .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
-  .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
-  .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
-  .act-scalp { background:rgba(139,145,155,.12); color:#8B919B; border:1px solid rgba(139,145,155,.4); }
-  .addon { display:none; margin-top:10px; padding:11px 14px; border-radius:8px; font-weight:700;
-    font-size:15px; border:1px dashed; }
-  .add-long { color:#E5484D; border-color:#E5484D; background:rgba(229,72,77,.10); }
-  .add-short { color:#3DAE73; border-color:#3DAE73; background:rgba(61,174,115,.10); }
-  .dirs { display:flex; gap:6px; margin-top:16px; flex-wrap:nowrap; overflow-x:auto; }
-  .chip { flex:0 0 auto; white-space:nowrap; font-size:12px;
-    color:var(--muted); background:#1B1F26; border:1px solid var(--line);
-    border-radius:18px; padding:6px 11px; transition:border-color .12s; }
-  .chip b { font-weight:600; margin-left:4px; font-size:12.5px; }
-  .dir-up { color:var(--down); }   /* 多／偏多＝紅（台股慣例 漲紅） */
-  .dir-down { color:var(--up); }   /* 空／偏空＝綠（跌綠） */
-  .dir-warn { color:#D98A3D; }
-  .dir-flat { color:var(--muted); }
-  .dir-soft { color:var(--muted); }                     /* 盤整：柔和 */
-  .dir-chop { color:#F5A623; font-weight:700; }       /* 震盪：橘字 */
-  .tri-break-up { color:#E5484D; font-weight:700; }   /* 糾結突破↑ 紅字 */
-  .tri-break-dn { color:#3DAE73; font-weight:700; }   /* 糾結跌破↓ 綠字 */
+  .hint b { font-size:17px; }
+  .hint.add { color:#3DA9FC; border-color:rgba(61,169,252,.5); background:rgba(61,169,252,.1); }
+  .hint.cut { color:#D4A73C; border-color:rgba(212,167,60,.5); background:rgba(212,167,60,.1); }
+  .hint.out { color:var(--green); border-color:rgba(61,174,115,.5); background:rgba(61,174,115,.1); }
+  .hint.ok  { color:var(--red); border-color:rgba(229,72,77,.5); background:rgba(229,72,77,.1); }
 
-  .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:22px; }
-  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
-  .stat-k { font-size:12px; color:var(--muted); margin-bottom:6px; }
-  .stat-v { font-family:"IBM Plex Mono",monospace; font-size:22px; font-weight:600; }
-  .stat-sub { font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); margin-top:2px; }
-
-  .section-title { font-size:13px; color:var(--muted); letter-spacing:.06em; margin:0 0 12px; }
-
-  .body-chart { background:var(--panel); border:1px solid var(--line); border-radius:10px;
-    padding:16px 12px 10px; margin-bottom:22px; }
-  .body-bars { display:flex; align-items:flex-end; gap:5px; }
-  .body-col { flex:1 1 0; min-width:0; display:flex; flex-direction:column; align-items:center; }
-  .body-bar-track { height:120px; width:100%; display:flex; align-items:flex-end; }
-  .body-bar-fill { width:100%; border-radius:3px 3px 0 0; }
-  .body-date { font-family:"IBM Plex Mono",monospace; font-size:9px; color:var(--muted);
-    margin-top:6px; transform:rotate(-45deg); transform-origin:center; white-space:nowrap; }
-  .legend { display:flex; gap:16px; font-size:11px; color:var(--muted); margin-top:16px; flex-wrap:wrap; }
-  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
-
-  .ma-table { background:var(--panel); border:1px solid var(--line); border-radius:10px;
-    padding:6px 16px; margin-bottom:22px; }
-  .ma-row { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--line); }
-  .ma-row:last-child { border-bottom:none; }
-  .ma-label { font-family:"IBM Plex Mono",monospace; color:var(--muted); font-size:13px; }
-  .ma-val { font-family:"IBM Plex Mono",monospace; font-size:15px; font-weight:500; }
-
-  footer { font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted);
-    text-align:center; margin-top:8px; line-height:1.7; }
+  footer { font-size:10.5px; color:var(--muted); text-align:center; margin-top:14px; line-height:1.7; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="eyebrow" id="eyebrow">月線系統</div>
-  <h1>月線趨勢系統</h1>
-
-  <div class="tabs" id="tabs"></div>
-
-  <select id="memberSel" class="member-sel" style="display:none"></select>
+  <div class="eyebrow">月線系統 · 期貨專用</div>
+  <h1>台指期 月線操作系統</h1>
+  <div class="sub-note">月線定多空 · 5日/10日定強弱加碼 · 季線空頭才做空(多頭不做空) · 進取型</div>
 
   <div class="picker">
-    <label>查看日期</label>
+    <label>日期</label>
     <input type="date" id="dateInput">
     <div class="nav">
       <button id="prevBtn" title="前一交易日">‹</button>
@@ -847,557 +312,282 @@ def generate_html_report(groups, periods):
     </div>
   </div>
 
-  <div class="meta" id="meta"></div>
-  <div class="verdict">
-    <div class="verdict-tagrow">
-      <span class="verdict-tag">判定結果</span>
-      <span class="signal-arrow" id="signalArrow"></span>
-    </div>
-    <div class="verdict-title"><span id="verdictLabel">—</span></div>
-    <div class="verdict-desc" id="verdictDesc"></div>
-    <div class="action" id="actionBox"></div>
-    <div class="pos-card">
-      <div class="risk-head">📌 我的現有部位<span class="tag">記錄後自動算損益</span></div>
-      <div class="pos-dir" id="posDir">
-        <button data-d="1">多單</button><button data-d="-1">空單</button>
-      </div>
-      <div class="pos-inputs">
-        <div class="pos-field"><input type="number" id="posLots" min="0" step="1" placeholder="0" inputmode="numeric"><span>口</span></div>
-        <div class="pos-field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
-      </div>
-      <div class="posresult" id="posBox"></div>
-      <div class="hintbox" id="hintBox" style="display:none"></div>
-    </div>
-    <div class="risk-card">
-      <div class="risk-head">🧮 持有口數試算<span class="tag">台指微台 · 破月線出場</span></div>
-      <div class="cap-field">
-        <span class="cap-cur">本金</span>
-        <input type="number" id="capInput" min="1" step="1" value="10" inputmode="numeric" placeholder="10">
-        <span class="cap-unit">萬元</span>
-      </div>
-      <div class="risk-row">
-        <span class="risk-lab">風險</span>
-        <div class="risk-chips" id="riskChips">
-          <button data-r="5">5%</button><button data-r="10">10%</button><button data-r="20">20%</button><button data-r="30">30%</button>
-          <input type="number" id="riskCustom" class="risk-custom" min="1" max="100" placeholder="自訂" inputmode="numeric">
-        </div>
-      </div>
-      <div class="risklots" id="riskBox"></div>
-    </div>
-    <div class="addon" id="addonBox"></div>
-    <div class="dirs">
-      <span class="chip" id="chipType">型態<b class="dir-val" id="alignVal"></b></span>
-      <span class="chip" id="chipTri">三線<b class="dir-val" id="triVal"></b></span>
-      <span class="chip" id="chipMom">短線<b class="dir-val" id="momVal"></b></span>
-    </div>
+  <!-- 1. 盤勢建議 -->
+  <div class="card">
+    <div class="card-title">📈 目前盤勢建議</div>
+    <span class="regime" id="regimeTag"></span>
+    <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
+    <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
+    <div class="desc" id="descEl"></div>
+    <div class="action" id="actionEl"></div>
+    <div class="baselots" id="baseLots"></div>
+    <div class="levels" id="levels"></div>
   </div>
 
-  <div class="stats" id="stats"></div>
-
-  <div class="section-title">近期 K 棒實體比例（最近 16 根）</div>
-  <div class="body-chart">
-    <div class="body-bars" id="bodyBars"></div>
-    <div class="legend">
-      <span><i style="background:#8B7EC8;"></i>低於警戒值</span>
-      <span><i style="background:#D4A73C;"></i>&gt;70% 強實體</span>
-      <span><i style="background:#3A4049;"></i>其餘</span>
+  <!-- 2. 我的現有部位 -->
+  <div class="card">
+    <div class="card-title">📌 我的現有部位<span class="tag">自動記憶 · 算損益</span></div>
+    <div class="dir-toggle" id="posDir">
+      <button data-d="1">多單</button><button data-d="-1">空單</button>
     </div>
+    <div class="row2">
+      <div class="field"><input type="number" id="posLots" min="0" step="1" placeholder="0" inputmode="numeric"><span>口</span></div>
+      <div class="field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
+    </div>
+    <div class="result" id="posBox">尚未輸入部位</div>
+    <div class="hint" id="hintBox" style="display:none"></div>
   </div>
 
-  <div class="section-title">當日均線數值</div>
-  <div class="ma-table" id="maTable"></div>
+  <!-- 3. 持有口數試算 -->
+  <div class="card">
+    <div class="card-title">🧮 持有口數試算<span class="tag">台指微台 · 破月線出場</span></div>
+    <div class="cap-field">
+      <span>本金</span>
+      <input type="number" id="capInput" min="1" step="1" value="10" inputmode="numeric" placeholder="10">
+      <span>萬元</span>
+    </div>
+    <div class="risk-row">
+      <span class="risk-lab">風險</span>
+      <div class="chips" id="riskChips">
+        <button data-r="5">5%</button><button data-r="10">10%</button><button data-r="20">20%</button><button data-r="30">30%</button>
+        <input type="number" id="riskCustom" class="custom" min="1" max="100" placeholder="自訂" inputmode="numeric">
+      </div>
+    </div>
+    <div class="result" id="riskBox"></div>
+  </div>
 
   <footer>
-    資料來源 FinMind（台指・台股）／ Kraken（比特幣）／ Yahoo Finance（美股）<br>
-    本頁產生時間 __GEN__ · 歷史判定為依當日（含）之前資料回推計算<br>
-    僅供研究參考，非投資建議
+    資料來源 FinMind（台指微台 MTX 近月主力）· 本頁產生 __GEN__<br>
+    歷史為當日(含)之前資料回推 · 僅供研究參考，非投資建議
   </footer>
 </div>
 
 <script>
-const GROUPS = __DATA__;
-const PERIODS = __PERIODS__;
-const ST = { expanding:"擴大中 ↑", contracting:"收斂中 ↓", flat:"持平 →" };
+const HIST = __DATA__;
+const PVV = 10, MG = 31800;
+const REGIME = {
+  bull:    { label: "多頭大趨勢 · 季線上揚", cls: "rg-bull" },
+  bear:    { label: "空頭大趨勢 · 季線下彎", cls: "rg-bear" },
+  neutral: { label: "趨勢未明 · 季線走平", cls: "rg-neutral" }
+};
 
-let curGroup = 0, curMember = 0, curIdx = 0, DATES = [];
-
-const tabsEl = document.getElementById("tabs");
-const eyebrowEl = document.getElementById("eyebrow");
-const memberSel = document.getElementById("memberSel");
 const dateInput = document.getElementById("dateInput");
+const prevBtn = document.getElementById("prevBtn");
+const nextBtn = document.getElementById("nextBtn");
 const capInput = document.getElementById("capInput");
 const riskChips = document.getElementById("riskChips");
 const riskCustom = document.getElementById("riskCustom");
 const posDir = document.getElementById("posDir");
 const posLots = document.getElementById("posLots");
 const posCost = document.getElementById("posCost");
-const prevBtn = document.getElementById("prevBtn");
-const nextBtn = document.getElementById("nextBtn");
+const riskBox = document.getElementById("riskBox");
+const posBox = document.getElementById("posBox");
+const hintBox = document.getElementById("hintBox");
 
-function curHist() { return GROUPS[curGroup].members[curMember].history; }
+let curIdx = HIST.length - 1;
 
 function fmt(v, d) {
   if (v === null || v === undefined) return "—";
-  return Number(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-}
-function pct(v) { return (v * 100).toFixed(0) + "%"; }
-function renderRisk() {
-  var r = window.__curRec; if (!r) return;
-  var box = document.getElementById("riskBox");
-  var cap = (parseFloat(document.getElementById("capInput").value) || 0) * 10000;   // 輸入單位=萬元
-  var PV = 10, MG = 31800, RISK = (window.__risk || 10) / 100;
-  var p20 = String(PERIODS[2]);
-  var m20 = (r.ma_now && r.ma_now[p20] != null) ? r.ma_now[p20] : null;
-  var c = r.last_close;
-  if (!r.lots_dir || cap <= 0 || m20 == null) {
-    box.textContent = "🧮 空手觀望 · 無建議口數"; box.className = "risklots lots-flat";
-    window.__targetLots = 0; renderHint(); return;
-  }
-  // 風險式口數 = 本金×風險% ÷ (到月線停損距離×每點值);月線=實際出場點,最小停損1%防貼線爆量
-  var dist = r.lots_dir > 0 ? (c - m20) : (m20 - c);
-  var stop = Math.max(dist, c * 0.01);
-  var oneLot = stop * PV;                       // 一口到月線的風險(元)
-  var capMax = Math.floor(cap / MG);            // 保證金可下上限
-  var lots = Math.floor(cap * RISK / oneLot);
-  var forced = false;
-  if (lots < 1 && capMax >= 1) { lots = 1; forced = true; }   // 保證金撐得起 → 至少給 1 口
-  var capped = false;
-  if (lots > capMax) { lots = capMax; capped = true; }
-  if (lots < 1) {
-    box.textContent = "🧮 建議 0 口 · 本金不足一口保證金 NT$" + fmt(MG, 0);
-    box.className = "risklots lots-flat"; window.__targetLots = 0; renderHint(); return;
-  }
-  var realPct = oneLot * lots / cap * 100;      // 這些口數的實際風險%
-  var dir = r.lots_dir > 0 ? "口多單" : "口空單";
-  var warn = "";
-  if (forced) warn = '<br><span class="rl-warn">⚠️ 本金小,這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%,已超過所選 ' + (RISK * 100) + '%</span>';
-  else if (capped) warn = '<br><span class="rl-warn">⚠️ 已達保證金上限 ' + capMax + ' 口</span>';
-  box.innerHTML = "🧮 建議 <b>" + lots + "</b> " + dir +
-    '<br><span class="rl-sub">到月線停損 ' + Math.round(dist) + " 點 · 一口風險 NT$" + fmt(oneLot, 0) +
-    " · 總風險約 " + realPct.toFixed(0) + "%</span>" + warn;
-  box.className = "risklots " + (r.lots_dir > 0 ? "lots-long" : "lots-short");
-  window.__targetLots = lots; renderHint();
-}
-function renderPos() {
-  var r = window.__curRec; if (!r) return;
-  var box = document.getElementById("posBox");
-  var lots = parseFloat(posLots.value) || 0;
-  var cost = parseFloat(posCost.value) || 0;
-  var dir = window.__posDir || 1;
-  var PV = 10, MG = 31800;
-  if (lots <= 0 || cost <= 0) {
-    box.textContent = "尚未輸入部位"; box.className = "posresult lots-flat"; return;
-  }
-  var c = r.last_close;
-  var pts = (c - cost) * dir;                    // 損益點數(多空校正)
-  var pnl = pts * lots * PV;                     // 浮動損益(元)
-  var pctMargin = pnl / (lots * MG) * 100;       // 對投入保證金的報酬%
-  var sign = pnl >= 0 ? "+" : "";
-  var col = pnl >= 0 ? "lots-long" : "lots-short";   // 賺紅賠綠
-  var p20 = String(PERIODS[2]);
-  var m20 = (r.ma_now && r.ma_now[p20] != null) ? r.ma_now[p20] : null;
-  var stopLine = "";
-  if (m20 != null) {
-    var toMl = (dir > 0 ? (c - m20) : (m20 - c));
-    stopLine = " · 月線 " + Math.round(m20) + "(距 " + Math.round(toMl) + " 點)";
-  }
-  box.innerHTML = "浮動損益 <b>" + sign + "NT$" + fmt(pnl, 0) + "</b>" +
-    '<br><span class="rl-sub">' + sign + fmt(pts, 0) + " 點 · 對保證金 " + sign + pctMargin.toFixed(0) + "%" + stopLine + "</span>";
-  box.className = "posresult " + col;
-  renderHint();
-}
-function renderHint() {
-  var r = window.__curRec; if (!r) return;
-  var box = document.getElementById("hintBox"); if (!box) return;
-  var cur = parseFloat(posLots.value) || 0;
-  var curDir = window.__posDir || 1;
-  var sysDir = r.lots_dir;                 // 1 多 / -1 空 / 0 空手
-  var target = window.__targetLots || 0;   // 風險式建議口數
-  if (cur <= 0) {                          // 尚無部位 → 提示可否進場
-    if (sysDir !== 0 && target > 0) {
-      box.innerHTML = "🚦 系統為" + (sysDir > 0 ? "多方" : "空方") + " · 可進場 <b>" + target + "</b> 口" + (sysDir > 0 ? "多單" : "空單");
-      box.className = "hintbox hint-add"; box.style.display = "block";
-    } else { box.style.display = "none"; }
-    return;
-  }
-  box.style.display = "block";
-  if (sysDir === 0) {
-    box.innerHTML = "🚦 系統轉<b>空手觀望</b> · 建議出場全部 " + cur + " 口";
-    box.className = "hintbox hint-out"; return;
-  }
-  if (sysDir !== curDir) {
-    box.innerHTML = "🔄 方向與系統<b>相反</b> · 建議平倉 " + cur + " 口" + (target > 0 ? "、反手 " + target + " 口" : "");
-    box.className = "hintbox hint-out"; return;
-  }
-  var diff = target - cur;
-  if (diff > 0) {
-    box.innerHTML = "🔵 建議<b>加碼 " + diff + "</b> 口　(目前 " + cur + " → 建議 " + target + ")";
-    box.className = "hintbox hint-add";
-  } else if (diff < 0) {
-    box.innerHTML = "🟠 建議<b>減碼 " + (-diff) + "</b> 口　(目前 " + cur + " → 建議 " + target + ")";
-    box.className = "hintbox hint-cut";
-  } else {
-    box.innerHTML = "✅ 部位<b>符合建議</b>(" + target + " 口)· 續抱";
-    box.className = "hintbox hint-ok";
-  }
-}
-function card(k, v, sub) {
-  return '<div class="stat"><div class="stat-k">' + k + '</div>' +
-         '<div class="stat-v">' + v + '</div><div class="stat-sub">' + sub + '</div></div>';
-}
-function setDir(id, dir, label) {
-  const el = document.getElementById(id);
-  el.textContent = label;
-  const cls = (dir === "up") ? "dir-up"
-            : (dir === "down") ? "dir-down"
-            : (dir === "converge") ? "dir-warn" : "dir-flat";
-  el.className = "dir-val " + cls;
-}
-function nearestIdx(dateStr) {
-  let found = -1;
-  for (let i = 0; i < DATES.length; i++) { if (DATES[i] <= dateStr) found = i; else break; }
-  return found >= 0 ? found : 0;
-}
-// 徽章外框色：多紅 空綠 震盪/糾結橘 其餘用預設灰（回傳空字串）
-function chipColor(kind, r) {
-  if (kind === "type") {
-    if (r.conv === "chop") return "#F5A623";
-    if (r.conv === "diverge") return r.conv_dir === "up" ? "#E5484D" : r.conv_dir === "down" ? "#3DAE73" : "";
-    return "";
-  }
-  if (kind === "mom") {
-    return r.momentum === "up" ? "#E5484D" : r.momentum === "down" ? "#3DAE73" : "";
-  }
-  if (kind === "tri") {
-    if (r.triband === "above" || r.triband === "break_up") return "#E5484D";
-    if (r.triband === "below" || r.triband === "break_dn") return "#3DAE73";
-    if (r.triband === "coil") return "#F5A623";
-    return "";
-  }
-  return "";
-}
-
-// 建立頁籤（每個群組一個頁籤）
-GROUPS.forEach(function (g, i) {
-  const t = document.createElement("div");
-  t.className = "tab";
-  t.textContent = g.name;
-  t.addEventListener("click", function () { switchGroup(i); });
-  tabsEl.appendChild(t);
-});
-memberSel.addEventListener("change", function () { loadMember(Number(memberSel.value)); });
-
-function switchGroup(i) {
-  curGroup = i;
-  const g = GROUPS[i];
-  for (let j = 0; j < tabsEl.children.length; j++) {
-    tabsEl.children[j].classList.toggle("active", j === i);
-  }
-  // 成員下拉：>1 個才顯示
-  memberSel.innerHTML = "";
-  if (g.members.length > 1) {
-    g.members.forEach(function (m, j) {
-      const o = document.createElement("option");
-      o.value = j;
-      o.textContent = m.name;
-      memberSel.appendChild(o);
-    });
-    memberSel.value = "0";
-    memberSel.style.display = "";
-  } else {
-    memberSel.style.display = "none";
-  }
-  loadMember(0);
-}
-
-function loadMember(j) {
-  curMember = j;
-  const m = GROUPS[curGroup].members[j];
-  DATES = m.history.map(function (r) { return r.last_date; });
-  dateInput.min = DATES[0];
-  dateInput.max = DATES[DATES.length - 1];
-  eyebrowEl.textContent = m.name + " · 月線系統";
-  render(m.history.length - 1);
+  return Number(v).toLocaleString("en-US", { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 });
 }
 
 function render(idx) {
+  const r = HIST[idx]; if (!r) return;
   curIdx = idx;
-  const hist = curHist();
-  const r = hist[idx];
-  const isLatest = idx === hist.length - 1;
-  dateInput.value = r.last_date;
-  document.documentElement.style.setProperty("--accent", r.accent || "#8B919B");
+  const isLatest = idx === HIST.length - 1;
+  dateInput.value = r.date;
+  document.documentElement.style.setProperty("--accent", r.accent);
 
-  document.getElementById("meta").innerHTML =
-    '<span>收盤日 <b class="mono">' + r.last_date + '</b></span>' +
-    '<span>收盤價 <b class="mono">' + fmt(r.last_close, 0) + '</b></span>' +
-    (isLatest ? '<span class="latest-badge">● 最新</span>'
-              : '<span class="hist-badge">○ 歷史回推</span>');
+  const rg = REGIME[r.regime] || REGIME.neutral;
+  const rt = document.getElementById("regimeTag");
+  rt.textContent = rg.label; rt.className = "regime " + rg.cls;
 
-  const vlEl = document.getElementById("verdictLabel");
-  vlEl.textContent = r.state_label;
-  vlEl.style.color = (r.state === "none" && r.accent === "#8B919B") ? "#8B919B" : "";   // 純無趨勢標題灰白；有方向時跟主色
-  document.getElementById("verdictDesc").textContent = r.state_desc;
+  const head = document.getElementById("headEl");
+  head.textContent = r.headline; head.style.color = r.accent;
+  const arrow = document.getElementById("arrowEl");
+  if (r.dir > 0) { arrow.textContent = "↑".repeat(r.lots); arrow.style.color = r.accent; }
+  else if (r.dir < 0) { arrow.textContent = "↓".repeat(r.lots); arrow.style.color = r.accent; }
+  else { arrow.textContent = ""; }
 
-  const act = document.getElementById("actionBox");
-  act.textContent = r.action_label;
-  act.className = "action " + (r.action_class || "act-scalp");
+  document.getElementById("dateOut").textContent = r.date;
+  document.getElementById("closeOut").textContent = fmt(r.close, 0);
+  document.getElementById("latestBadge").textContent = isLatest ? "· ● 最新" : "· ○ 歷史回推";
+
+  document.getElementById("descEl").textContent = r.desc;
+  const act = document.getElementById("actionEl");
+  act.textContent = r.action;
+  act.className = "action " + (r.dir > 0 ? "act-long" : r.dir < 0 ? "act-short" : "act-flat");
+
+  const bl = document.getElementById("baseLots");
+  if (r.dir > 0) bl.innerHTML = '建議基準 <b style="color:var(--red)">' + r.lots + '</b> 口多單';
+  else if (r.dir < 0) bl.innerHTML = '建議基準 <b style="color:var(--green)">' + r.lots + '</b> 口空單';
+  else bl.innerHTML = '<span style="color:var(--muted)">空手觀望（0 口）</span>';
+
+  const defs = [["收盤", r.close], ["5日", r.ma5], ["10日", r.ma10], ["月線", r.ma20], ["季線", r.ma60]];
+  let lv = "";
+  defs.forEach(function (d, k) {
+    let cls = "";
+    if (k > 0 && d[1] != null) cls = (r.close >= d[1]) ? "up" : "down";
+    lv += '<div class="lv ' + cls + '"><div class="lv-k">' + d[0] + '</div><div class="lv-v">' + fmt(d[1], 0) + '</div></div>';
+  });
+  document.getElementById("levels").innerHTML = lv;
 
   window.__curRec = r;
   renderRisk();
   renderPos();
 
-  const addon = document.getElementById("addonBox");
-  if (r.add_signal === "add_long" || r.add_signal === "add_short") {
-    addon.textContent = "🎯 " + r.add_label;
-    addon.className = "addon " + (r.add_signal === "add_long" ? "add-long" : "add-short");
-    addon.style.display = "block";
-  } else {
-    addon.style.display = "none";
-  }
-
-  // 均線型態：發散跟著趨勢方向上色（多紅空綠），收斂為橘色警訊
-  const alignEl = document.getElementById("alignVal");
-  alignEl.textContent = r.conv_label;
-  if (r.conv === "chop") {
-    alignEl.className = "dir-val dir-chop";            // 震盪：醒目
-  } else if (r.conv === "range") {
-    alignEl.className = "dir-val dir-soft";            // 盤整：柔和
-  } else if (r.conv === "diverge") {
-    alignEl.className = "dir-val " + (r.conv_dir === "up" ? "dir-up"
-                        : r.conv_dir === "down" ? "dir-down" : "dir-flat");
-  } else {
-    alignEl.className = "dir-val dir-flat";
-  }
-  setDir("momVal", r.momentum, r.momentum_label);
-
-  // 三線：站上/跌破三線(多紅空綠)、糾結(橘)、糾結突破(醒目底色)
-  const triEl = document.getElementById("triVal");
-  triEl.textContent = r.triband_label;
-  const tclass = r.triband === "break_up" ? "tri-break-up"
-               : r.triband === "break_dn" ? "tri-break-dn"
-               : r.triband === "above" ? "dir-up"
-               : r.triband === "below" ? "dir-down"
-               : r.triband === "coil" ? "dir-warn" : "dir-flat";
-  triEl.className = "dir-val " + tclass;
-
-  document.getElementById("chipType").style.borderColor = chipColor("type", r);
-  document.getElementById("chipTri").style.borderColor = chipColor("tri", r);
-  document.getElementById("chipMom").style.borderColor = chipColor("mom", r);
-
-  // 強訊號箭頭：2 項→1 箭頭、3 項→2 箭頭；無趨勢又未持續同向時不顯示（避免洗盤反覆）
-  const arrow = document.getElementById("signalArrow");
-  if (r.arrow_dir === "up" && r.arrow_n > 0) {
-    arrow.textContent = "↑".repeat(r.arrow_n); arrow.className = "signal-arrow sig-up";
-  } else if (r.arrow_dir === "down" && r.arrow_n > 0) {
-    arrow.textContent = "↓".repeat(r.arrow_n); arrow.className = "signal-arrow sig-down";
-  } else {
-    arrow.textContent = ""; arrow.className = "signal-arrow";
-  }
-
-  document.getElementById("stats").innerHTML =
-    card("均線發散度", r.spread_now + "%", ST[r.spread_trend] || "—") +
-    card("近 " + r.lookback + " 根變動", (r.spread_delta >= 0 ? "+" : "") + r.spread_delta.toFixed(2), "Δ 發散度") +
-    card("連續小實體", r.streak, "門檻 " + r.streak_thresh + " 根") +
-    card("實體警戒值", pct(r.body_thresh), "低於即計數");
-
-  let bars = "";
-  r.recent_bodies.forEach(function (b) {
-    const h = Math.max(2, Math.round(b.ratio * 100));
-    const color = b.ratio < r.body_thresh ? "#8B7EC8" : (b.ratio > 0.70 ? "#D4A73C" : "#3A4049");
-    bars += '<div class="body-col" title="' + b.date + '：' + pct(b.ratio) + '">' +
-            '<div class="body-bar-track"><div class="body-bar-fill" style="height:' + h + '%;background:' + color + ';"></div></div>' +
-            '<div class="body-date">' + b.date.slice(5) + '</div></div>';
-  });
-  document.getElementById("bodyBars").innerHTML = bars;
-
-  let ma = "";
-  PERIODS.forEach(function (p) {
-    ma += '<div class="ma-row"><span class="ma-label">MA' + p + '</span>' +
-          '<span class="ma-val">' + fmt(r.ma_now[String(p)], 0) + '</span></div>';
-  });
-  document.getElementById("maTable").innerHTML = ma;
-
   prevBtn.disabled = idx === 0;
   nextBtn.disabled = isLatest;
 }
 
-dateInput.addEventListener("change", function () {
-  if (dateInput.value) render(nearestIdx(dateInput.value));
-});
-prevBtn.addEventListener("click", function () { if (curIdx > 0) render(curIdx - 1); });
-nextBtn.addEventListener("click", function () {
-  if (curIdx < curHist().length - 1) render(curIdx + 1);
-});
-
-// 本金輸入：記住上次輸入,改動即重算(隨本金變大=複利加碼)
-var _savedCap = null;
-try { _savedCap = localStorage.getItem("ml_cap_wan"); } catch (e) {}
-if (_savedCap) capInput.value = _savedCap;
-capInput.addEventListener("input", function () {
-  try { localStorage.setItem("ml_cap_wan", capInput.value); } catch (e) {}
-  renderRisk();
-});
-
-// 風險%選鈕：預設 5/10/20/30% 或自訂,記住上次選擇
-var _savedRisk = null;
-try { _savedRisk = localStorage.getItem("ml_risk"); } catch (e) {}
-window.__risk = _savedRisk ? parseFloat(_savedRisk) : 10;
-var _chipBtns = riskChips.querySelectorAll("button");
-function _syncRiskUI() {
-  var matched = false;
-  Array.prototype.forEach.call(_chipBtns, function (x) {
-    var on = parseFloat(x.getAttribute("data-r")) === window.__risk;
-    x.classList.toggle("on", on); if (on) matched = true;
-  });
-  if (!matched) riskCustom.value = window.__risk; else riskCustom.value = "";
+function renderRisk() {
+  var r = window.__curRec; if (!r) return;
+  var cap = (parseFloat(capInput.value) || 0) * 10000;   // 萬元
+  var RISK = (window.__risk || 10) / 100;
+  var dir = r.dir, m20 = r.ma20, c = r.close;
+  if (dir === 0 || cap <= 0 || m20 == null) {
+    riskBox.textContent = "系統空手 · 無建議口數"; riskBox.className = "result flat";
+    window.__targetLots = 0; renderHint(); return;
+  }
+  var dist = dir > 0 ? (c - m20) : (m20 - c);
+  var stop = Math.max(dist, c * 0.01);        // 到月線停損（最小 1%）
+  var oneLot = stop * PVV;
+  var capMax = Math.floor(cap / MG);
+  var lots = Math.floor(cap * RISK / oneLot);
+  var forced = false;
+  if (lots < 1 && capMax >= 1) { lots = 1; forced = true; }
+  var capped = false;
+  if (lots > capMax) { lots = capMax; capped = true; }
+  if (lots < 1) {
+    riskBox.textContent = "建議 0 口 · 本金不足一口保證金 NT$" + fmt(MG, 0);
+    riskBox.className = "result flat"; window.__targetLots = 0; renderHint(); return;
+  }
+  var realPct = oneLot * lots / cap * 100;
+  var word = dir > 0 ? "口多單" : "口空單";
+  var warn = "";
+  if (forced) warn = '<div class="sub warn">⚠️ 本金小，這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
+  else if (capped) warn = '<div class="sub warn">⚠️ 已達保證金上限 ' + capMax + ' 口</div>';
+  riskBox.innerHTML = "建議 <b>" + lots + "</b> " + word +
+    '<div class="sub">到月線停損 ' + Math.round(dist) + " 點 · 一口風險 NT$" + fmt(oneLot, 0) + " · 總風險約 " + realPct.toFixed(0) + "%</div>" + warn;
+  riskBox.className = "result " + (dir > 0 ? "long" : "short");
+  window.__targetLots = lots; renderHint();
 }
-Array.prototype.forEach.call(_chipBtns, function (b) {
-  b.addEventListener("click", function () {
-    window.__risk = parseFloat(b.getAttribute("data-r"));
-    try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {}
-    _syncRiskUI(); renderRisk();
-  });
+
+function renderPos() {
+  var r = window.__curRec; if (!r) return;
+  var lots = parseFloat(posLots.value) || 0, cost = parseFloat(posCost.value) || 0, dir = window.__posDir || 1;
+  if (lots <= 0 || cost <= 0) { posBox.textContent = "尚未輸入部位"; posBox.className = "result flat"; renderHint(); return; }
+  var c = r.close;
+  var pts = (c - cost) * dir, pnl = pts * lots * PVV, pctM = pnl / (lots * MG) * 100;
+  var sign = pnl >= 0 ? "+" : "";
+  var m20 = r.ma20, stopLine = "";
+  if (m20 != null) { var toMl = dir > 0 ? (c - m20) : (m20 - c); stopLine = " · 月線 " + Math.round(m20) + "（距 " + Math.round(toMl) + " 點）"; }
+  posBox.innerHTML = "浮動損益 <b>" + sign + "NT$" + fmt(pnl, 0) + "</b>" +
+    '<div class="sub">' + sign + fmt(pts, 0) + " 點 · 對保證金 " + sign + pctM.toFixed(0) + "%" + stopLine + "</div>";
+  posBox.className = "result " + (pnl >= 0 ? "long" : "short");   // 賺紅賠綠
+  renderHint();
+}
+
+function renderHint() {
+  var r = window.__curRec; if (!r) return;
+  var cur = parseFloat(posLots.value) || 0;
+  var curDir = window.__posDir || 1, sysDir = r.dir, target = window.__targetLots || 0;
+  if (cur <= 0) {
+    if (sysDir !== 0 && target > 0) {
+      hintBox.innerHTML = "🚦 系統為" + (sysDir > 0 ? "多方" : "空方") + " · 可進場 <b>" + target + "</b> 口" + (sysDir > 0 ? "多單" : "空單");
+      hintBox.className = "hint add"; hintBox.style.display = "block";
+    } else { hintBox.style.display = "none"; }
+    return;
+  }
+  hintBox.style.display = "block";
+  if (sysDir === 0) { hintBox.innerHTML = "🚦 系統轉<b>空手</b> · 建議出場全部 " + cur + " 口"; hintBox.className = "hint out"; return; }
+  if (sysDir !== curDir) { hintBox.innerHTML = "🔄 方向與系統<b>相反</b> · 建議平倉 " + cur + " 口" + (target > 0 ? "、反手 " + target + " 口" : ""); hintBox.className = "hint out"; return; }
+  var diff = target - cur;
+  if (diff > 0) { hintBox.innerHTML = "🔵 建議<b>加碼 " + diff + "</b> 口（目前 " + cur + " → 建議 " + target + "）"; hintBox.className = "hint add"; }
+  else if (diff < 0) { hintBox.innerHTML = "🟠 建議<b>減碼 " + (-diff) + "</b> 口（目前 " + cur + " → 建議 " + target + "）"; hintBox.className = "hint cut"; }
+  else { hintBox.innerHTML = "✅ 部位<b>符合建議</b>（" + target + " 口）· 續抱"; hintBox.className = "hint ok"; }
+}
+
+function nearestIdx(d) {
+  var best = 0;
+  for (var i = 0; i < HIST.length; i++) { if (HIST[i].date <= d) best = i; }
+  return best;
+}
+dateInput.addEventListener("change", function () { if (dateInput.value) render(nearestIdx(dateInput.value)); });
+prevBtn.addEventListener("click", function () { if (curIdx > 0) render(curIdx - 1); });
+nextBtn.addEventListener("click", function () { if (curIdx < HIST.length - 1) render(curIdx + 1); });
+
+// 本金（萬元）
+var _sc = null; try { _sc = localStorage.getItem("ml_cap_wan"); } catch (e) {}
+if (_sc) capInput.value = _sc;
+capInput.addEventListener("input", function () { try { localStorage.setItem("ml_cap_wan", capInput.value); } catch (e) {} renderRisk(); });
+
+// 風險%
+var _sr = null; try { _sr = localStorage.getItem("ml_risk"); } catch (e) {}
+window.__risk = _sr ? parseFloat(_sr) : 10;
+var _cb = riskChips.querySelectorAll("button");
+function _syncRisk() {
+  var m = false;
+  Array.prototype.forEach.call(_cb, function (x) { var on = parseFloat(x.getAttribute("data-r")) === window.__risk; x.classList.toggle("on", on); if (on) m = true; });
+  riskCustom.value = m ? "" : window.__risk;
+}
+Array.prototype.forEach.call(_cb, function (b) {
+  b.addEventListener("click", function () { window.__risk = parseFloat(b.getAttribute("data-r")); try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {} _syncRisk(); renderRisk(); });
 });
 riskCustom.addEventListener("input", function () {
-  var v = parseFloat(riskCustom.value);
-  if (!isFinite(v) || v <= 0) return;
-  window.__risk = v;
-  try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {}
-  Array.prototype.forEach.call(_chipBtns, function (x) { x.classList.remove("on"); });
-  renderRisk();
+  var v = parseFloat(riskCustom.value); if (!isFinite(v) || v <= 0) return;
+  window.__risk = v; try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {}
+  Array.prototype.forEach.call(_cb, function (x) { x.classList.remove("on"); }); renderRisk();
 });
-_syncRiskUI();
+_syncRisk();
 
-// 現有部位：方向/口數/成本,全部記憶
+// 現有部位
 try {
-  var _pd = localStorage.getItem("ml_pos_dir");
-  var _pl = localStorage.getItem("ml_pos_lots");
-  var _pc = localStorage.getItem("ml_pos_cost");
+  var _pd = localStorage.getItem("ml_pos_dir"), _pl = localStorage.getItem("ml_pos_lots"), _pc = localStorage.getItem("ml_pos_cost");
   window.__posDir = _pd ? parseFloat(_pd) : 1;
   if (_pl) posLots.value = _pl;
   if (_pc) posCost.value = _pc;
 } catch (e) { window.__posDir = 1; }
-var _dirBtns = posDir.querySelectorAll("button");
-function _syncPosDir() {
-  Array.prototype.forEach.call(_dirBtns, function (x) {
-    x.classList.toggle("on", parseFloat(x.getAttribute("data-d")) === window.__posDir);
-  });
-}
-Array.prototype.forEach.call(_dirBtns, function (b) {
-  b.addEventListener("click", function () {
-    window.__posDir = parseFloat(b.getAttribute("data-d"));
-    try { localStorage.setItem("ml_pos_dir", window.__posDir); } catch (e) {}
-    _syncPosDir(); renderPos();
-  });
+var _db = posDir.querySelectorAll("button");
+function _syncPosDir() { Array.prototype.forEach.call(_db, function (x) { x.classList.toggle("on", parseFloat(x.getAttribute("data-d")) === window.__posDir); }); }
+Array.prototype.forEach.call(_db, function (b) {
+  b.addEventListener("click", function () { window.__posDir = parseFloat(b.getAttribute("data-d")); try { localStorage.setItem("ml_pos_dir", window.__posDir); } catch (e) {} _syncPosDir(); renderPos(); });
 });
-posLots.addEventListener("input", function () {
-  try { localStorage.setItem("ml_pos_lots", posLots.value); } catch (e) {}
-  renderPos();
-});
-posCost.addEventListener("input", function () {
-  try { localStorage.setItem("ml_pos_cost", posCost.value); } catch (e) {}
-  renderPos();
-});
+posLots.addEventListener("input", function () { try { localStorage.setItem("ml_pos_lots", posLots.value); } catch (e) {} renderPos(); });
+posCost.addEventListener("input", function () { try { localStorage.setItem("ml_pos_cost", posCost.value); } catch (e) {} renderPos(); });
 _syncPosDir();
 
-// 預設顯示第一個頁籤的最新一天
-switchGroup(0);
+render(curIdx);
 </script>
 </body>
 </html>
 """
-    html = (html
-            .replace("__GEN__", gen_time)
-            .replace("__PERIODS__", periods_json)
-            .replace("__DATA__", data_json))
-    return html
 
 
 # ---------------------------------------------------------------------------
-# 串接：抓所有商品 → 各自建歷史 → 產出單一 HTML → 寫檔
+# 主程式
 # ---------------------------------------------------------------------------
 
-def build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days, hist_max):
-    if cfg["kind"] in ("futures", "stock"):
-        end = datetime.date.today()
-        start = end - datetime.timedelta(days=history_days * 2)
-        if cfg["kind"] == "futures":
-            bars = fetch_futures_daily(cfg["id"], start.isoformat(), end.isoformat())
-        else:
-            bars = fetch_stock_daily(cfg["id"], start.isoformat(), end.isoformat())
-    elif cfg["kind"] == "crypto":
-        bars = fetch_crypto_daily(cfg["pair"])
-    elif cfg["kind"] == "index":
-        bars = fetch_index_daily(cfg["symbol"])
-    else:
-        raise RuntimeError("未知商品類型：%s" % cfg["kind"])
+def main(output_path="index.html"):
+    end = datetime.date.today()
+    start = end - datetime.timedelta(days=800)   # 足夠算季線斜率與年線
+    print("抓取台指期（微台 MTX）%s ~ %s ..." % (start.isoformat(), end.isoformat()))
+    bars = fetch_futures_daily("MTX", start.isoformat(), end.isoformat())
+    print("  取得 %d 根日 K，最新 %s" % (len(bars), bars[-1]["date"]))
 
-    history = build_history(bars, periods, body_thresh, streak_thresh, lookback, max_days=hist_max)
+    history = build_history(bars, max_days=180)
     if not history:
         raise RuntimeError("資料不足，無法建立任何一天的判定。")
-    return {"key": cfg["key"], "name": cfg["name"], "history": history}
 
-
-def run_all(groups_cfg=None, periods=None, body_thresh_pct=40, streak_thresh=3,
-            lookback=6, history_days=200, hist_max=180, output_path="index.html"):
-    if groups_cfg is None:
-        groups_cfg = ASSET_GROUPS
-    if periods is None:
-        periods = [5, 10, 20, 60]
-    body_thresh = body_thresh_pct / 100.0
-
-    if not FINMIND_TOKEN:
-        print("（未設定 FINMIND_TOKEN，台指/台股以匿名額度抓取，仍可運作）")
-
-    groups = []
-    for g in groups_cfg:
-        members = []
-        for cfg in g["members"]:
-            print("抓取並分析 %s（%s）..." % (cfg["name"], cfg["key"]))
-            try:
-                res = build_asset(cfg, periods, body_thresh, streak_thresh, lookback, history_days, hist_max)
-            except Exception as e:  # 單一商品失敗不影響其他
-                print("  ! %s 失敗，略過：%s" % (cfg["key"], e), file=sys.stderr)
-                continue
-            latest = res["history"][-1]
-            print("  %s：%d 天可查，最新 %s → %s"
-                  % (cfg["key"], len(res["history"]), latest["last_date"], latest["state_label"]))
-            members.append(res)
-        if members:
-            groups.append({"key": g["key"], "name": g["name"], "members": members})
-
-    if not groups:
-        raise RuntimeError("所有商品都抓取失敗，無法產生報告。")
-
-    # 保護：只有全部商品都成功才覆寫，避免某天 API 抽風導致頁面掉商品
-    expected = sum(len(g["members"]) for g in groups_cfg)
-    built = sum(len(g["members"]) for g in groups)
-    if built < expected:
-        raise RuntimeError(
-            "僅成功 %d/%d 檔，為避免頁面掉商品，本次不覆寫 index.html（保留前一版）。" % (built, expected)
-        )
-
-    print("產生 HTML 報告 ...")
-    html = generate_html_report(groups, periods)
+    gen_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    html = generate_html(history, gen_time)
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
-    n_members = sum(len(g["members"]) for g in groups)
-    print("完成！已寫入 %s（%d 頁籤 / %d 商品）。" % (output_path, len(groups), n_members))
-    return groups
+
+    latest = history[-1]
+    print("完成：寫入 %s（%d 天）。最新 %s → %s（%d 口，方向 %d）"
+          % (output_path, len(history), latest["date"], latest["headline"], latest["lots"], latest["dir"]))
 
 
 if __name__ == "__main__":
-    try:
-        run_all(
-            groups_cfg=ASSET_GROUPS,
-            periods=[5, 10, 20, 60],
-            body_thresh_pct=40,
-            streak_thresh=3,
-            lookback=6,
-            history_days=200,
-            hist_max=180,
-        )
-    except Exception as e:
-        print("執行失敗：%s" % e, file=sys.stderr)
-        sys.exit(1)
+    main()
