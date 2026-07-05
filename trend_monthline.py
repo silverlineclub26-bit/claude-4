@@ -442,12 +442,11 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <div class="card-body">
       <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
       <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
-      <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
+      <div class="metaline">收盤日 <b id="dateOut">—</b> <span id="latestBadge"></span></div>
       <div class="maline" id="maLine"></div>
       <div class="desc" id="descEl"></div>
       <div class="action" id="actionEl"></div>
       <div class="baselots" id="baseLots"></div>
-      <div class="levels" id="levels"></div>
     </div>
   </div>
 
@@ -557,22 +556,12 @@ function render(idx) {
   } else { arrow.textContent = ""; }
 
   document.getElementById("dateOut").textContent = r.date;
-  document.getElementById("closeOut").textContent = fmt(r.close, 0);
   document.getElementById("latestBadge").textContent = isLatest ? "· ● 最新" : "· ○ 歷史回推";
 
   document.getElementById("descEl").textContent = r.desc;
   const act = document.getElementById("actionEl");
   act.textContent = r.action;
   act.className = "action " + (r.dir > 0 ? "act-long" : r.dir < 0 ? "act-short" : "act-flat");
-
-  const defs = [["收盤", r.close], ["5日", r.ma5], ["10日", r.ma10], ["月線", r.ma20], ["季線", r.ma60]];
-  let lv = "";
-  defs.forEach(function (d, k) {
-    let cls = "";
-    if (k > 0 && d[1] != null) cls = (r.close >= d[1]) ? "up" : "down";
-    lv += '<div class="lv ' + cls + '"><div class="lv-k">' + d[0] + '</div><div class="lv-v">' + fmt(d[1], 0) + '</div></div>';
-  });
-  document.getElementById("levels").innerHTML = lv;
 
   window.__curRec = r;
   renderRisk();
