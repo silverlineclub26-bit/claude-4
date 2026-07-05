@@ -135,11 +135,26 @@ STATE_META = {
 }
 
 
+MODE_META = {   # 市場模式 → (標籤, css)
+    "trend":  ("趨勢發散 · 進取加碼", "md-trend"),
+    "normal": ("趨勢成形 · 標準布局", "md-normal"),
+    "chop":   ("盤整洗盤 · 只留底倉不加碼", "md-chop"),
+}
+
+
 def build_history(bars, max_days=180):
     closes = [b["close"] for b in bars]
     ma5, ma10, ma20 = sma(closes, 5), sma(closes, 10), sma(closes, 20)
     ma60, ma240 = sma(closes, 60), sma(closes, 240)
     n = len(bars)
+    ranges = [b["max"] - b["min"] for b in bars]
+
+    # 三線(5/10/20)相對收盤的糾結度(%)，供三線糾結/突破判定
+    sp3 = [None] * n
+    for i in range(n):
+        a, b_, c_ = ma5[i], ma10[i], ma20[i]
+        if None not in (a, b_, c_) and closes[i]:
+            sp3[i] = (max(a, b_, c_) - min(a, b_, c_)) / closes[i] * 100.0
 
     def _r(x):
         return None if x is None else round(x, 1)
@@ -151,6 +166,49 @@ def build_history(bars, max_days=180):
         if m20 is None or m5 is None or m10 is None:
             continue
 
+        # ── 沿用舊系統：波動洗盤 / 5-10日收斂(發散·盤整·震盪) / 三線糾結 ──
+        r5 = ranges[max(0, i - 4):i + 1]; r20 = ranges[max(0, i - 19):i + 1]
+        vr = sum(r5) / len(r5); vb = sum(r20) / len(r20)
+        choppy = vb > 0 and vr > 1.2 * vb                       # 近5振幅 > 1.2×近20 = 洗盤
+
+        conv, conv_label = "flat", "—"
+        if i >= 3 and None not in (ma5[i], ma10[i], ma5[i - 3], ma10[i - 3]):
+            dn = abs(ma5[i] - ma10[i]); dr = abs(ma5[i - 3] - ma10[i - 3])
+            if dn < dr:
+                conv, conv_label = ("chop", "震盪") if choppy else ("range", "盤整")
+            else:
+                conv, conv_label = "diverge", "發散"
+
+        triband, triband_label = "mix", "中性"
+        win = [v for v in sp3[max(0, i - 19):i + 1] if v is not None]
+        base = sum(win) / len(win) if win else None
+        if base and base > 0 and sp3[i] is not None:
+            recent = [v for v in sp3[max(0, i - 4):i + 1] if v is not None]
+            recent_tight = any(v < 0.6 * base for v in recent)
+            cur_tight = sp3[i] < 0.6 * base
+            above = c > m5 and c > m10 and c > m20
+            below = c < m5 and c < m10 and c < m20
+            if above and recent_tight:
+                triband, triband_label = "break_up", "糾結突破↑"
+            elif below and recent_tight:
+                triband, triband_label = "break_dn", "糾結跌破↓"
+            elif above:
+                triband, triband_label = "above", "站上三線"
+            elif below:
+                triband, triband_label = "below", "跌破三線"
+            elif cur_tight:
+                triband, triband_label = "coil", "均線糾結"
+            else:
+                triband, triband_label = "mix", "中性"
+
+        # 市場模式(優先序)：發散/糾結突破 → 趨勢；三線糾結/震盪 → 盤整洗盤；其餘 → 一般
+        if conv == "diverge" or triband in ("break_up", "break_dn"):
+            mode = "trend"
+        elif triband == "coil" or conv == "chop":
+            mode = "chop"
+        else:
+            mode = "normal"
+
         # 季線大趨勢（做空濾網 / 標籤）：需 60 日均線與 20 根前的斜率
         m60p = ma60[i - 20] if (m60 is not None and i >= 20) else None
         bear = (m60 is not None and m60p is not None and c < m60 and m60 < m60p)
@@ -161,24 +219,42 @@ def build_history(bars, max_days=180):
         if bear:
             if c < m20:
                 d = -1
-                lots = 3 if c <= m5 else (2 if c <= m10 else 1)
+                raw = 3 if c <= m5 else (2 if c <= m10 else 1)
                 state = "down_strong" if c <= m5 else ("down_r5" if c <= m10 else "down_r10")
             else:
-                d, lots, state = 0, 0, "bounce_flat"
+                d, raw, state = 0, 0, "bounce_flat"
         else:
             if c >= m20:
                 d = 1
-                lots = 3 if c >= m5 else (2 if c >= m10 else 1)
+                raw = 3 if c >= m5 else (2 if c >= m10 else 1)
                 state = "up_strong" if c >= m5 else ("up_r5" if c >= m10 else "up_r10")
             else:
-                d, lots, state = 0, 0, "exit_flat"
+                d, raw, state = 0, 0, "exit_flat"
+
+        # ── 動態加碼(大賺小賠)：趨勢發散→滿倉3、一般→最多2、盤整洗盤→只留底倉1 ──
+        if d == 0:
+            lots = 0
+        elif mode == "chop":
+            lots = 1
+        elif mode == "trend":
+            lots = raw
+        else:  # normal
+            lots = min(raw, 2)
 
         headline, desc, action, accent = STATE_META[state]
+        # 盤整/洗盤時覆寫建議動作，明確「不加碼」
+        if d != 0 and mode == "chop":
+            action = "盤整洗盤區 · 只留底倉 1 口、不加碼（突破再進取）"
+        elif d != 0 and mode == "normal":
+            action = "標準布局最多 2 口 · 待均線發散確認再加碼滿倉"
+
         recs.append({
             "date": bars[i]["date"], "close": round(c, 0),
             "ma5": _r(m5), "ma10": _r(m10), "ma20": _r(m20),
             "ma60": _r(m60), "ma240": _r(ma240[i]),
-            "regime": regime, "dir": d, "lots": lots, "state": state,
+            "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
+            "mode": mode, "mode_label": MODE_META[mode][0], "mode_cls": MODE_META[mode][1],
+            "conv_label": conv_label, "triband_label": triband_label,
             "headline": headline, "desc": desc, "action": action, "accent": accent,
         })
     return recs[-max_days:]
@@ -233,6 +309,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .rg-bull { color:var(--red); border-color:rgba(229,72,77,.5); background:rgba(229,72,77,.08); }
   .rg-bear { color:var(--green); border-color:rgba(61,174,115,.5); background:rgba(61,174,115,.08); }
   .rg-neutral { color:var(--muted); border-color:var(--line); }
+  .mode { display:inline-block; font-size:12px; font-weight:800; padding:4px 11px; border-radius:999px;
+    border:1px solid; margin:0 0 10px 6px; }
+  .md-trend  { color:#3DA9FC; border-color:rgba(61,169,252,.5); background:rgba(61,169,252,.08); }
+  .md-normal { color:var(--muted); border-color:var(--line); }
+  .md-chop   { color:#D4A73C; border-color:rgba(212,167,60,.5); background:rgba(212,167,60,.1); }
+  .maline { font-size:11.5px; color:var(--muted); margin-top:8px; }
+  .maline b { color:#C2C7CE; }
   .headline { font-size:27px; font-weight:900; letter-spacing:.5px; display:flex; align-items:center; gap:10px; }
   .arrow { font-size:22px; font-weight:900; }
   .metaline { font-size:12.5px; color:var(--muted); margin-top:6px; }
@@ -315,9 +398,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <!-- 1. 盤勢建議 -->
   <div class="card">
     <div class="card-title">📈 目前盤勢建議</div>
-    <span class="regime" id="regimeTag"></span>
+    <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
     <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
     <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
+    <div class="maline" id="maLine"></div>
     <div class="desc" id="descEl"></div>
     <div class="action" id="actionEl"></div>
     <div class="baselots" id="baseLots"></div>
@@ -401,6 +485,9 @@ function render(idx) {
   const rg = REGIME[r.regime] || REGIME.neutral;
   const rt = document.getElementById("regimeTag");
   rt.textContent = rg.label; rt.className = "regime " + rg.cls;
+  const mt = document.getElementById("modeTag");
+  mt.textContent = r.mode_label; mt.className = "mode " + r.mode_cls;
+  document.getElementById("maLine").innerHTML = "均線：短均 <b>" + r.conv_label + "</b> · 三線 <b>" + r.triband_label + "</b>";
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
