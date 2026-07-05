@@ -276,6 +276,7 @@ def build_history(bars, max_days=180):
 
         recs.append({
             "date": bars[i]["date"], "close": round(c, 0),
+            "up": 1 if (i >= 1 and closes[i] >= closes[i - 1]) else 0,   # 當天收紅(漲)
             "ma5": _r(m5), "ma10": _r(m10), "ma20": _r(m20),
             "ma60": _r(m60), "ma240": _r(ma240[i]),
             "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
@@ -442,7 +443,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     <div class="card-body">
       <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
       <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
-      <div class="metaline">收盤日 <b id="dateOut">—</b> <span id="latestBadge"></span></div>
+      <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
       <div class="maline" id="maLine"></div>
       <div class="desc" id="descEl"></div>
       <div class="action" id="actionEl"></div>
@@ -556,6 +557,9 @@ function render(idx) {
   } else { arrow.textContent = ""; }
 
   document.getElementById("dateOut").textContent = r.date;
+  var ce = document.getElementById("closeOut");
+  ce.textContent = fmt(r.close, 0);
+  ce.style.color = r.up ? "var(--red)" : "var(--green)";   // 當天漲紅跌綠
   document.getElementById("latestBadge").textContent = isLatest ? "· ● 最新" : "· ○ 歷史回推";
 
   document.getElementById("descEl").textContent = r.desc;
