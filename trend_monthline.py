@@ -176,13 +176,15 @@ def build_history(bars, max_days=180):
         vr = sum(r5) / len(r5); vb = sum(r20) / len(r20)
         choppy = vb > 0 and vr > 1.2 * vb                       # 近5振幅 > 1.2×近20 = 洗盤
 
+        # 發散 = 相鄰均線間距(|5-10| + |10-月|)比 3 天前變大;變小=收斂(高波動→震盪,低波動→盤整)
         conv, conv_label = "flat", "—"
-        if i >= 3 and None not in (ma5[i], ma10[i], ma5[i - 3], ma10[i - 3]):
-            dn = abs(ma5[i] - ma10[i]); dr = abs(ma5[i - 3] - ma10[i - 3])
-            if dn < dr:
-                conv, conv_label = ("chop", "震盪") if choppy else ("range", "盤整")
-            else:
+        if i >= 3 and None not in (ma5[i], ma10[i], ma20[i], ma5[i - 3], ma10[i - 3], ma20[i - 3]):
+            g_now = abs(ma5[i] - ma10[i]) + abs(ma10[i] - ma20[i])
+            g_prev = abs(ma5[i - 3] - ma10[i - 3]) + abs(ma10[i - 3] - ma20[i - 3])
+            if g_now > g_prev:
                 conv, conv_label = "diverge", "發散"
+            elif g_now < g_prev:
+                conv, conv_label = ("chop", "震盪") if choppy else ("range", "盤整")
 
         triband, triband_label = "mix", "中性"
         win = [v for v in sp3[max(0, i - 19):i + 1] if v is not None]
@@ -541,7 +543,7 @@ function render(idx) {
   rt.textContent = rg.label; rt.className = "regime " + rg.cls;
   const mt = document.getElementById("modeTag");
   mt.textContent = r.mode_label; mt.className = "mode " + r.mode_cls;
-  document.getElementById("maLine").innerHTML = "均線：短均 <b>" + r.conv_label + "</b> · 三線 <b>" + r.triband_label + "</b>";
+  document.getElementById("maLine").innerHTML = "均線：發散度 <b>" + r.conv_label + "</b> · 三線 <b>" + r.triband_label + "</b>";
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
