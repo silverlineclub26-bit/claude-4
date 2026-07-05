@@ -750,6 +750,26 @@ def generate_html_report(groups, periods):
   .risklots b { font-size:26px; }
   .risklots .rl-sub { font-weight:600; font-size:12.5px; color:#8B919B; }
   .risklots .rl-warn { font-weight:700; font-size:12.5px; color:#D4A73C; }
+  .pos-card { margin-top:10px; padding:14px; border-radius:12px; border:1px solid var(--line);
+    background:linear-gradient(180deg,#161A20,#12151A); }
+  .pos-dir { display:flex; gap:6px; margin-bottom:10px; }
+  .pos-dir button { flex:1; padding:9px 0; border-radius:8px; border:1px solid var(--line);
+    background:#0E1116; color:#8B919B; font-size:14px; font-weight:800; cursor:pointer; transition:.15s; }
+  .pos-dir button.on[data-d="1"] { background:#E5484D; color:#fff; border-color:#E5484D; }
+  .pos-dir button.on[data-d="-1"] { background:#3DAE73; color:#fff; border-color:#3DAE73; }
+  .pos-inputs { display:flex; gap:8px; }
+  .pos-field { flex:1; display:flex; align-items:center; gap:6px; background:#0E1116; border:1px solid var(--line);
+    border-radius:10px; padding:10px 12px; }
+  .pos-field:focus-within { border-color:var(--accent); }
+  .pos-field input { flex:1; min-width:0; background:transparent; border:none; outline:none;
+    color:#E6E8EB; font-size:19px; font-weight:800; text-align:right; }
+  .pos-field input::-webkit-outer-spin-button, .pos-field input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .pos-field input[type=number] { -moz-appearance:textfield; }
+  .pos-field span { font-size:12.5px; color:#8B919B; font-weight:700; white-space:nowrap; }
+  .posresult { margin-top:12px; padding:14px; border-radius:10px; font-weight:800; font-size:16px;
+    text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.55; }
+  .posresult b { font-size:24px; }
+  .posresult .rl-sub { font-weight:600; font-size:12.5px; color:#8B919B; }
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
@@ -845,6 +865,17 @@ def generate_html_report(groups, periods):
       </div>
       <div class="risklots" id="riskBox"></div>
     </div>
+    <div class="pos-card">
+      <div class="risk-head">📌 我的現有部位<span class="tag">記錄後自動算損益</span></div>
+      <div class="pos-dir" id="posDir">
+        <button data-d="1">多單</button><button data-d="-1">空單</button>
+      </div>
+      <div class="pos-inputs">
+        <div class="pos-field"><input type="number" id="posLots" min="0" step="1" placeholder="0" inputmode="numeric"><span>口</span></div>
+        <div class="pos-field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
+      </div>
+      <div class="posresult" id="posBox"></div>
+    </div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
       <span class="chip" id="chipType">型態<b class="dir-val" id="alignVal"></b></span>
@@ -889,6 +920,9 @@ const dateInput = document.getElementById("dateInput");
 const capInput = document.getElementById("capInput");
 const riskChips = document.getElementById("riskChips");
 const riskCustom = document.getElementById("riskCustom");
+const posDir = document.getElementById("posDir");
+const posLots = document.getElementById("posLots");
+const posCost = document.getElementById("posCost");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 
@@ -933,6 +967,33 @@ function renderRisk() {
     '<br><span class="rl-sub">到月線停損 ' + Math.round(dist) + " 點 · 一口風險 NT$" + fmt(oneLot, 0) +
     " · 總風險約 " + realPct.toFixed(0) + "%</span>" + warn;
   box.className = "risklots " + (r.lots_dir > 0 ? "lots-long" : "lots-short");
+}
+function renderPos() {
+  var r = window.__curRec; if (!r) return;
+  var box = document.getElementById("posBox");
+  var lots = parseFloat(posLots.value) || 0;
+  var cost = parseFloat(posCost.value) || 0;
+  var dir = window.__posDir || 1;
+  var PV = 10, MG = 31800;
+  if (lots <= 0 || cost <= 0) {
+    box.textContent = "尚未輸入部位"; box.className = "posresult lots-flat"; return;
+  }
+  var c = r.last_close;
+  var pts = (c - cost) * dir;                    // 損益點數(多空校正)
+  var pnl = pts * lots * PV;                     // 浮動損益(元)
+  var pctMargin = pnl / (lots * MG) * 100;       // 對投入保證金的報酬%
+  var sign = pnl >= 0 ? "+" : "";
+  var col = pnl >= 0 ? "lots-long" : "lots-short";   // 賺紅賠綠
+  var p20 = String(PERIODS[2]);
+  var m20 = (r.ma_now && r.ma_now[p20] != null) ? r.ma_now[p20] : null;
+  var stopLine = "";
+  if (m20 != null) {
+    var toMl = (dir > 0 ? (c - m20) : (m20 - c));
+    stopLine = " · 月線 " + Math.round(m20) + "(距 " + Math.round(toMl) + " 點)";
+  }
+  box.innerHTML = "浮動損益 <b>" + sign + "NT$" + fmt(pnl, 0) + "</b>" +
+    '<br><span class="rl-sub">' + sign + fmt(pts, 0) + " 點 · 對保證金 " + sign + pctMargin.toFixed(0) + "%" + stopLine + "</span>";
+  box.className = "posresult " + col;
 }
 function card(k, v, sub) {
   return '<div class="stat"><div class="stat-k">' + k + '</div>' +
@@ -1038,6 +1099,7 @@ function render(idx) {
 
   window.__curRec = r;
   renderRisk();
+  renderPos();
 
   const addon = document.getElementById("addonBox");
   if (r.add_signal === "add_long" || r.add_signal === "add_short") {
@@ -1160,6 +1222,38 @@ riskCustom.addEventListener("input", function () {
   renderRisk();
 });
 _syncRiskUI();
+
+// 現有部位：方向/口數/成本,全部記憶
+try {
+  var _pd = localStorage.getItem("ml_pos_dir");
+  var _pl = localStorage.getItem("ml_pos_lots");
+  var _pc = localStorage.getItem("ml_pos_cost");
+  window.__posDir = _pd ? parseFloat(_pd) : 1;
+  if (_pl) posLots.value = _pl;
+  if (_pc) posCost.value = _pc;
+} catch (e) { window.__posDir = 1; }
+var _dirBtns = posDir.querySelectorAll("button");
+function _syncPosDir() {
+  Array.prototype.forEach.call(_dirBtns, function (x) {
+    x.classList.toggle("on", parseFloat(x.getAttribute("data-d")) === window.__posDir);
+  });
+}
+Array.prototype.forEach.call(_dirBtns, function (b) {
+  b.addEventListener("click", function () {
+    window.__posDir = parseFloat(b.getAttribute("data-d"));
+    try { localStorage.setItem("ml_pos_dir", window.__posDir); } catch (e) {}
+    _syncPosDir(); renderPos();
+  });
+});
+posLots.addEventListener("input", function () {
+  try { localStorage.setItem("ml_pos_lots", posLots.value); } catch (e) {}
+  renderPos();
+});
+posCost.addEventListener("input", function () {
+  try { localStorage.setItem("ml_pos_cost", posCost.value); } catch (e) {}
+  renderPos();
+});
+_syncPosDir();
 
 // 預設顯示第一個頁籤的最新一天
 switchGroup(0);
