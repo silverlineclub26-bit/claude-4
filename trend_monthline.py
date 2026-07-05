@@ -153,6 +153,18 @@ def build_history(bars, max_days=180):
     n = len(bars)
     ranges = [b["max"] - b["min"] for b in bars]
 
+    # 日報酬與波動(標準差),供「波動警示」自適應停損
+    rets = [0.0] * n
+    for i in range(1, n):
+        if closes[i - 1]:
+            rets[i] = (closes[i] - closes[i - 1]) / closes[i - 1]
+
+    def _std(lst):
+        if len(lst) < 2:
+            return 0.0
+        mu = sum(lst) / len(lst)
+        return (sum((x - mu) ** 2 for x in lst) / len(lst)) ** 0.5
+
     # 三線(5/10/20)相對收盤的糾結度(%)，供三線糾結/突破判定
     sp3 = [None] * n
     for i in range(n):
@@ -264,6 +276,15 @@ def build_history(bars, max_days=180):
         p_label = plab               # 顯示實際觸發原因(發散 or 糾結突破)
         lots = 0 if d == 0 else p_tier
 
+        # ── 波動警示(k=1.3):近5日波動 > 1.3×前20日,或瞬間下殺 → 停損由月線上移到10日 ──
+        warn = False
+        if i >= 26:
+            sr = _std(rets[i - 4:i + 1]); sb = _std(rets[i - 25:i - 4])
+            if sb > 0 and (sr > 1.3 * sb or rets[i] < -2.5 * sb):
+                warn = True
+        stop_label = "10日" if (warn and m10 is not None) else "月線"
+        stop_val = m10 if (warn and m10 is not None) else m20
+
         headline, desc, action, accent = STATE_META[state]
         # 依週期階段覆寫建議動作(待確認狀態保留自己的續抱說明)
         if d != 0 and state not in ("hold_below", "hold_above"):
@@ -282,6 +303,7 @@ def build_history(bars, max_days=180):
             "ma60": _r(m60), "ma240": _r(ma240[i]),
             "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
             "mode": phase, "mode_label": p_label, "mode_cls": p_cls,
+            "warn": 1 if warn else 0, "stop": _r(stop_val), "stop_label": stop_label,
             "conv_label": conv_label, "triband_label": triband_label,
             "headline": headline, "desc": desc, "action": action, "accent": accent,
         })
@@ -352,6 +374,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .md-trend  { color:#3DA9FC; border-color:rgba(61,169,252,.5); background:rgba(61,169,252,.08); }
   .md-normal { color:var(--muted); border-color:var(--line); }
   .md-chop   { color:#D4A73C; border-color:rgba(212,167,60,.5); background:rgba(212,167,60,.1); }
+  .warn-badge { display:inline-block; font-size:12px; font-weight:800; padding:4px 11px; border-radius:999px;
+    margin:0 0 10px 6px; color:#fff; background:#E5484D; border:1px solid #E5484D; }
   .maline { font-size:11.5px; color:var(--muted); margin-top:8px; }
   .maline b { color:#C2C7CE; }
   .headline { font-size:27px; font-weight:900; letter-spacing:.5px; display:flex; align-items:center; gap:10px; }
@@ -442,7 +466,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <div class="card" id="cardStance">
     <div class="card-title">📈 目前盤勢建議<span class="caret">▾</span></div>
     <div class="card-body">
-      <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
+      <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span><span class="warn-badge" id="warnTag" style="display:none">⚠️ 波動警示 · 停損上移10日</span>
       <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
       <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
       <div class="maline" id="maLine"></div>
@@ -543,6 +567,7 @@ function render(idx) {
   const mt = document.getElementById("modeTag");
   mt.textContent = r.mode_label; mt.className = "mode " + r.mode_cls;
   document.getElementById("maLine").innerHTML = "均線：發散度 <b>" + r.conv_label + "</b> · 三線 <b>" + r.triband_label + "</b>";
+  document.getElementById("warnTag").style.display = r.warn ? "inline-block" : "none";
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
@@ -632,8 +657,11 @@ function renderPos() {
   var c = r.close;
   var pts = (c - cost) * dir, pnl = pts * lots * PVV, pctM = pnl / (lots * MG) * 100;
   var sign = pnl >= 0 ? "+" : "";
-  var m20 = r.ma20, stopLine = "";
-  if (m20 != null) { var toMl = dir > 0 ? (c - m20) : (m20 - c); stopLine = " · 月線 " + Math.round(m20) + "（距 " + Math.round(toMl) + " 點）"; }
+  var sv = r.stop, stopLine = "";
+  if (sv != null) {
+    var toS = dir > 0 ? (c - sv) : (sv - c);
+    stopLine = " · " + (r.warn ? "⚠️停損上移" : "停損") + r.stop_label + " " + Math.round(sv) + "（距 " + Math.round(toS) + " 點）";
+  }
   posBox.innerHTML = "浮動損益 <b>" + sign + "NT$" + fmt(pnl, 0) + "</b>" +
     '<div class="sub">' + sign + fmt(pts, 0) + " 點 · 對保證金 " + sign + pctM.toFixed(0) + "%" + stopLine + "</div>";
   posBox.className = "result " + (pnl >= 0 ? "long" : "short");   // 賺紅賠綠
