@@ -135,10 +135,10 @@ STATE_META = {
 }
 
 
-MODE_META = {   # 市場模式 → (標籤, css)
-    "trend":  ("趨勢發散 · 進取加碼", "md-trend"),
-    "normal": ("趨勢成形 · 標準布局", "md-normal"),
-    "chop":   ("盤整洗盤 · 只留底倉不加碼", "md-chop"),
+PHASE_META = {   # 發散-收斂週期階段 → (標籤, css, 目標口數)
+    "expand": ("發散中 · 大幅加碼", "md-trend", 3),
+    "fade":   ("發散尾聲/開始收斂 · 逐步減碼", "md-normal", 2),
+    "coil":   ("收斂進行中 · 不動作(底倉)", "md-chop", 1),
 }
 
 
@@ -201,13 +201,15 @@ def build_history(bars, max_days=180):
             else:
                 triband, triband_label = "mix", "中性"
 
-        # 市場模式(優先序)：發散/糾結突破 → 趨勢；三線糾結/震盪 → 盤整洗盤；其餘 → 一般
+        # ── 發散-收斂週期(核心加碼邏輯) ──
+        # 用舊系統驗證過的訊號對應週期階段(比純斜率穩):
+        #   發散/糾結突破 → 發散中(大幅加碼);三線糾結/震盪 → 收斂中(不動作底倉);其餘 → 尾聲/趨緩(逐步)
         if conv == "diverge" or triband in ("break_up", "break_dn"):
-            mode = "trend"
+            phase = "expand"
         elif triband == "coil" or conv == "chop":
-            mode = "chop"
+            phase = "coil"
         else:
-            mode = "normal"
+            phase = "fade"
 
         # 季線大趨勢（做空濾網 / 標籤）：需 60 日均線與 20 根前的斜率
         m60p = ma60[i - 20] if (m60 is not None and i >= 20) else None
@@ -231,29 +233,27 @@ def build_history(bars, max_days=180):
             else:
                 d, raw, state = 0, 0, "exit_flat"
 
-        # ── 動態加碼(大賺小賠)：趨勢發散→滿倉3、一般→最多2、盤整洗盤→只留底倉1 ──
-        if d == 0:
-            lots = 0
-        elif mode == "chop":
-            lots = 1
-        elif mode == "trend":
-            lots = raw
-        else:  # normal
-            lots = min(raw, 2)
+        # ── 動態加碼(大賺小賠)：口數跟著發散-收斂週期走 ──
+        p_label, p_cls, p_tier = PHASE_META[phase]
+        lots = 0 if d == 0 else p_tier
 
         headline, desc, action, accent = STATE_META[state]
-        # 盤整/洗盤時覆寫建議動作，明確「不加碼」
-        if d != 0 and mode == "chop":
-            action = "盤整洗盤區 · 只留底倉 1 口、不加碼（突破再進取）"
-        elif d != 0 and mode == "normal":
-            action = "標準布局最多 2 口 · 待均線發散確認再加碼滿倉"
+        # 依週期階段覆寫建議動作
+        if d != 0:
+            dw = "多" if d > 0 else "空"
+            if phase == "expand":
+                action = "發散中 · 大幅加碼到滿倉 3 口" + dw + "單"
+            elif phase == "fade":
+                action = "發散尾聲/開始收斂 · 逐步減碼至 2 口" + dw + "單（收獲利）"
+            else:
+                action = "收斂進行中 · 不加碼、只留底倉 1 口" + dw + "單（等下次發散）"
 
         recs.append({
             "date": bars[i]["date"], "close": round(c, 0),
             "ma5": _r(m5), "ma10": _r(m10), "ma20": _r(m20),
             "ma60": _r(m60), "ma240": _r(ma240[i]),
             "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
-            "mode": mode, "mode_label": MODE_META[mode][0], "mode_cls": MODE_META[mode][1],
+            "mode": phase, "mode_label": p_label, "mode_cls": p_cls,
             "conv_label": conv_label, "triband_label": triband_label,
             "headline": headline, "desc": desc, "action": action, "accent": accent,
         })
