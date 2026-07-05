@@ -276,14 +276,10 @@ def build_history(bars, max_days=180):
         p_label = plab               # 顯示實際觸發原因(發散 or 糾結突破)
         lots = 0 if d == 0 else p_tier
 
-        # ── 波動警示(k=1.3):近5日波動 > 1.3×前20日,或瞬間下殺 → 停損由月線上移到10日 ──
+        # 波動→停損上移改由 live 15分即時負責;網站停損統一掛月線
         warn = False
-        if i >= 26:
-            sr = _std(rets[i - 4:i + 1]); sb = _std(rets[i - 25:i - 4])
-            if sb > 0 and (sr > 1.3 * sb or rets[i] < -2.5 * sb):
-                warn = True
-        stop_label = "10日" if (warn and m10 is not None) else "月線"
-        stop_val = m10 if (warn and m10 is not None) else m20
+        stop_label = "月線"
+        stop_val = m20
 
         headline, desc, action, accent = STATE_META[state]
         # 依週期階段覆寫建議動作(待確認狀態保留自己的續抱說明)
@@ -466,7 +462,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   <div class="card" id="cardStance">
     <div class="card-title">📈 目前盤勢建議<span class="caret">▾</span></div>
     <div class="card-body">
-      <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span><span class="warn-badge" id="warnTag" style="display:none">⚠️ 波動警示 · 停損上移10日</span>
+      <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
       <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
       <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
       <div class="maline" id="maLine"></div>
@@ -567,7 +563,6 @@ function render(idx) {
   const mt = document.getElementById("modeTag");
   mt.textContent = r.mode_label; mt.className = "mode " + r.mode_cls;
   document.getElementById("maLine").innerHTML = "均線：發散度 <b>" + r.conv_label + "</b> · 三線 <b>" + r.triband_label + "</b>";
-  document.getElementById("warnTag").style.display = r.warn ? "inline-block" : "none";
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
