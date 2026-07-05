@@ -825,7 +825,7 @@ def generate_html_report(groups, periods):
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
     <div class="risk-card">
-      <div class="risk-head">🧮 風險 3% 口數試算<span class="tag">台指微台 · 破月線出場</span></div>
+      <div class="risk-head">🧮 持有口數試算<span class="tag">台指微台 · 破月線出場</span></div>
       <div class="cap-field">
         <span class="cap-cur">NT$</span>
         <input type="number" id="capInput" min="10000" step="10000" value="100000" inputmode="numeric" placeholder="輸入本金">
