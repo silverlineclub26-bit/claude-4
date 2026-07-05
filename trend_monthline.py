@@ -734,9 +734,17 @@ def generate_html_report(groups, periods):
   .cap-field input::-webkit-outer-spin-button, .cap-field input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
   .cap-field input[type=number] { -moz-appearance:textfield; }
   .cap-unit { font-size:12.5px; color:#8B919B; font-weight:700; }
+  .risk-row { display:flex; align-items:center; gap:10px; margin-top:10px; }
+  .risk-lab { font-size:12.5px; font-weight:800; color:#8B919B; white-space:nowrap; }
+  .risk-chips { display:flex; gap:6px; flex:1; }
+  .risk-chips button { flex:1; padding:8px 0; border-radius:8px; border:1px solid var(--line);
+    background:#0E1116; color:#8B919B; font-size:13.5px; font-weight:800; cursor:pointer; transition:.15s; }
+  .risk-chips button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
   .risklots { margin-top:12px; padding:14px; border-radius:10px; font-weight:800; font-size:17px;
     text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.55; }
   .risklots b { font-size:26px; }
+  .risklots .rl-sub { font-weight:600; font-size:12.5px; color:#8B919B; }
+  .risklots .rl-warn { font-weight:700; font-size:12.5px; color:#D4A73C; }
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
@@ -821,8 +829,14 @@ def generate_html_report(groups, periods):
       <div class="risk-head">🧮 風險 3% 口數試算<span class="tag">台指微台 · 破月線出場</span></div>
       <div class="cap-field">
         <span class="cap-cur">NT$</span>
-        <input type="number" id="capInput" min="10000" step="10000" value="500000" inputmode="numeric" placeholder="輸入本金">
+        <input type="number" id="capInput" min="10000" step="10000" value="100000" inputmode="numeric" placeholder="輸入本金">
         <span class="cap-unit">本金</span>
+      </div>
+      <div class="risk-row">
+        <span class="risk-lab">風險</span>
+        <div class="risk-chips" id="riskChips">
+          <button data-r="3">3%</button><button data-r="5">5%</button><button data-r="10">10%</button><button data-r="15">15%</button><button data-r="20">20%</button>
+        </div>
       </div>
       <div class="risklots" id="riskBox"></div>
     </div>
@@ -868,6 +882,7 @@ const eyebrowEl = document.getElementById("eyebrow");
 const memberSel = document.getElementById("memberSel");
 const dateInput = document.getElementById("dateInput");
 const capInput = document.getElementById("capInput");
+const riskChips = document.getElementById("riskChips");
 const prevBtn = document.getElementById("prevBtn");
 const nextBtn = document.getElementById("nextBtn");
 
@@ -882,28 +897,35 @@ function renderRisk() {
   var r = window.__curRec; if (!r) return;
   var box = document.getElementById("riskBox");
   var cap = parseFloat(document.getElementById("capInput").value) || 0;
-  var PV = 10, MG = 31800, RISK = 0.03;
+  var PV = 10, MG = 31800, RISK = (window.__risk || 10) / 100;
   var p20 = String(PERIODS[2]);
   var m20 = (r.ma_now && r.ma_now[p20] != null) ? r.ma_now[p20] : null;
   var c = r.last_close;
   if (!r.lots_dir || cap <= 0 || m20 == null) {
     box.textContent = "🧮 空手觀望 · 無建議口數"; box.className = "risklots lots-flat"; return;
   }
-  // 風險式口數 = 本金×3% ÷ (到月線停損距離×每點值);月線=實際出場點,最小停損1%防貼線爆量
+  // 風險式口數 = 本金×風險% ÷ (到月線停損距離×每點值);月線=實際出場點,最小停損1%防貼線爆量
   var dist = r.lots_dir > 0 ? (c - m20) : (m20 - c);
   var stop = Math.max(dist, c * 0.01);
-  var lots = Math.floor(cap * RISK / (stop * PV));
-  var capMax = Math.floor(cap / MG), capped = false;
+  var oneLot = stop * PV;                       // 一口到月線的風險(元)
+  var capMax = Math.floor(cap / MG);            // 保證金可下上限
+  var lots = Math.floor(cap * RISK / oneLot);
+  var forced = false;
+  if (lots < 1 && capMax >= 1) { lots = 1; forced = true; }   // 保證金撐得起 → 至少給 1 口
+  var capped = false;
   if (lots > capMax) { lots = capMax; capped = true; }
   if (lots < 1) {
-    var need = Math.ceil(stop * PV / RISK / 10000) * 10000;
-    box.textContent = "🧮 風險3% 建議 0 口(本金不足) · 約需 NT$" + fmt(need, 0) + " 才夠 1 口";
+    box.textContent = "🧮 建議 0 口 · 本金不足一口保證金 NT$" + fmt(MG, 0);
     box.className = "risklots lots-flat"; return;
   }
+  var realPct = oneLot * lots / cap * 100;      // 這些口數的實際風險%
   var dir = r.lots_dir > 0 ? "口多單" : "口空單";
-  box.innerHTML = "🧮 風險3% · 建議 <b>" + lots + "</b> " + dir +
-    '<br><span style="font-weight:600;font-size:12.5px;color:#8B919B;">到月線停損 ' + Math.round(dist) +
-    " 點　每口風險 NT$" + fmt(stop * PV, 0) + "　保證金上限 " + capMax + " 口" + (capped ? " ⚠️已達上限" : "") + "</span>";
+  var warn = "";
+  if (forced) warn = '<br><span class="rl-warn">⚠️ 本金小,這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%,已超過所選 ' + (RISK * 100) + '%</span>';
+  else if (capped) warn = '<br><span class="rl-warn">⚠️ 已達保證金上限 ' + capMax + ' 口</span>';
+  box.innerHTML = "🧮 建議 <b>" + lots + "</b> " + dir +
+    '<br><span class="rl-sub">到月線停損 ' + Math.round(dist) + " 點 · 一口風險 NT$" + fmt(oneLot, 0) +
+    " · 總風險約 " + realPct.toFixed(0) + "%</span>" + warn;
   box.className = "risklots " + (r.lots_dir > 0 ? "lots-long" : "lots-short");
 }
 function card(k, v, sub) {
@@ -1106,6 +1128,21 @@ if (_savedCap) capInput.value = _savedCap;
 capInput.addEventListener("input", function () {
   try { localStorage.setItem("ml_cap", capInput.value); } catch (e) {}
   renderRisk();
+});
+
+// 風險%選鈕：可選 3~20%,記住上次選擇
+var _savedRisk = null;
+try { _savedRisk = localStorage.getItem("ml_risk"); } catch (e) {}
+window.__risk = _savedRisk ? parseFloat(_savedRisk) : 10;
+var _chipBtns = riskChips.querySelectorAll("button");
+Array.prototype.forEach.call(_chipBtns, function (b) {
+  if (parseFloat(b.getAttribute("data-r")) === window.__risk) b.classList.add("on");
+  b.addEventListener("click", function () {
+    window.__risk = parseFloat(b.getAttribute("data-r"));
+    try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {}
+    Array.prototype.forEach.call(_chipBtns, function (x) { x.classList.toggle("on", x === b); });
+    renderRisk();
+  });
 });
 
 // 預設顯示第一個頁籤的最新一天
