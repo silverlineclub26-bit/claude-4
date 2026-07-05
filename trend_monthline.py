@@ -545,14 +545,14 @@ function render(idx) {
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
-  // 箭頭數 = 收盤站上(多)/跌破(空)幾條均線：5日、10日、月線,最多 3 支
+  // 箭頭數 = 均線多頭/空頭「排列」達成幾層(彼此獨立):5>10、10>月、月>季
   const arrow = document.getElementById("arrowEl");
   if (r.dir !== 0) {
-    var cnt = 0;
-    [r.ma5, r.ma10, r.ma20].forEach(function (m) {
-      if (m != null && ((r.dir > 0 && r.close >= m) || (r.dir < 0 && r.close <= m))) cnt++;
-    });
-    arrow.textContent = (r.dir > 0 ? "↑" : "↓").repeat(Math.max(1, cnt));
+    var conds = (r.dir > 0)
+      ? [r.ma5 > r.ma10, r.ma10 > r.ma20, (r.ma60 != null && r.ma20 > r.ma60)]
+      : [r.ma5 < r.ma10, r.ma10 < r.ma20, (r.ma60 != null && r.ma20 < r.ma60)];
+    var cnt = conds.filter(Boolean).length;
+    arrow.textContent = cnt > 0 ? (r.dir > 0 ? "↑" : "↓").repeat(cnt) : "";
     arrow.style.color = r.accent;
   } else { arrow.textContent = ""; }
 
