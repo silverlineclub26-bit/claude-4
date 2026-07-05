@@ -856,6 +856,18 @@ def generate_html_report(groups, periods):
     <div class="verdict-title"><span id="verdictLabel">—</span></div>
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
+    <div class="pos-card">
+      <div class="risk-head">📌 我的現有部位<span class="tag">記錄後自動算損益</span></div>
+      <div class="pos-dir" id="posDir">
+        <button data-d="1">多單</button><button data-d="-1">空單</button>
+      </div>
+      <div class="pos-inputs">
+        <div class="pos-field"><input type="number" id="posLots" min="0" step="1" placeholder="0" inputmode="numeric"><span>口</span></div>
+        <div class="pos-field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
+      </div>
+      <div class="posresult" id="posBox"></div>
+      <div class="hintbox" id="hintBox" style="display:none"></div>
+    </div>
     <div class="risk-card">
       <div class="risk-head">🧮 持有口數試算<span class="tag">台指微台 · 破月線出場</span></div>
       <div class="cap-field">
@@ -871,18 +883,6 @@ def generate_html_report(groups, periods):
         </div>
       </div>
       <div class="risklots" id="riskBox"></div>
-    </div>
-    <div class="pos-card">
-      <div class="risk-head">📌 我的現有部位<span class="tag">記錄後自動算損益</span></div>
-      <div class="pos-dir" id="posDir">
-        <button data-d="1">多單</button><button data-d="-1">空單</button>
-      </div>
-      <div class="pos-inputs">
-        <div class="pos-field"><input type="number" id="posLots" min="0" step="1" placeholder="0" inputmode="numeric"><span>口</span></div>
-        <div class="pos-field"><input type="number" id="posCost" min="0" step="1" placeholder="進場價" inputmode="numeric"><span>成本</span></div>
-      </div>
-      <div class="posresult" id="posBox"></div>
-      <div class="hintbox" id="hintBox" style="display:none"></div>
     </div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
