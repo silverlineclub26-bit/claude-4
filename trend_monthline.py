@@ -393,7 +393,6 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <body>
 <div class="wrap">
   <h1>PO的期貨無腦照作系統 V1.0</h1>
-  <div class="sub-note">月線定多空 · 5日/10日定強弱 · 發散加碼收斂縮手 · 季線空頭才做空 · 大賺小賠</div>
 
   <div class="ct-row">
     <span class="ct-lab">商品</span>
