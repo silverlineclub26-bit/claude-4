@@ -719,12 +719,24 @@ def generate_html_report(groups, periods):
   .lots { margin-top:10px; padding:14px; border-radius:8px; font-weight:800; font-size:20px;
     text-align:center; border:1px solid var(--line); background:#14171C; }
   .lots-long { color:#E5484D; } .lots-short { color:#3DAE73; } .lots-flat { color:#8B919B; }
-  .caprow { margin-top:10px; display:flex; align-items:center; justify-content:center; gap:8px;
-    font-size:13.5px; color:#8B919B; flex-wrap:wrap; }
-  .caprow input { width:120px; padding:7px 9px; border-radius:7px; border:1px solid var(--line);
-    background:#14171C; color:#E6E8EB; font-size:15px; font-weight:700; text-align:right; }
-  .risklots { margin-top:8px; padding:12px 14px; border-radius:8px; font-weight:800; font-size:16px;
-    text-align:center; border:1px solid var(--line); background:#14171C; line-height:1.5; }
+  .risk-card { margin-top:10px; padding:14px; border-radius:12px; border:1px solid var(--line);
+    background:linear-gradient(180deg,#161A20,#12151A); }
+  .risk-head { font-size:12.5px; font-weight:800; color:#B7BDC6; letter-spacing:.6px;
+    margin-bottom:11px; display:flex; align-items:center; gap:8px; }
+  .risk-head .tag { font-size:10.5px; font-weight:700; color:#8B919B; border:1px solid var(--line);
+    padding:2px 8px; border-radius:999px; }
+  .cap-field { display:flex; align-items:center; gap:8px; background:#0E1116; border:1px solid var(--line);
+    border-radius:10px; padding:11px 13px; transition:border-color .15s; }
+  .cap-field:focus-within { border-color:var(--accent); }
+  .cap-cur { font-size:15px; font-weight:800; color:#8B919B; }
+  .cap-field input { flex:1; min-width:0; background:transparent; border:none; outline:none;
+    color:#E6E8EB; font-size:23px; font-weight:800; text-align:right; letter-spacing:.5px; }
+  .cap-field input::-webkit-outer-spin-button, .cap-field input::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+  .cap-field input[type=number] { -moz-appearance:textfield; }
+  .cap-unit { font-size:12.5px; color:#8B919B; font-weight:700; }
+  .risklots { margin-top:12px; padding:14px; border-radius:10px; font-weight:800; font-size:17px;
+    text-align:center; border:1px solid var(--line); background:#0E1116; line-height:1.55; }
+  .risklots b { font-size:26px; }
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
@@ -805,8 +817,15 @@ def generate_html_report(groups, periods):
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
     <div class="lots" id="lotsBox"></div>
-    <div class="caprow">本金 <input type="number" id="capInput" min="10000" step="10000" value="500000"> 元 · 風險3% 複利試算(台指微台)</div>
-    <div class="risklots" id="riskBox"></div>
+    <div class="risk-card">
+      <div class="risk-head">🧮 風險 3% 口數試算<span class="tag">台指微台 · 破月線出場</span></div>
+      <div class="cap-field">
+        <span class="cap-cur">NT$</span>
+        <input type="number" id="capInput" min="10000" step="10000" value="500000" inputmode="numeric" placeholder="輸入本金">
+        <span class="cap-unit">本金</span>
+      </div>
+      <div class="risklots" id="riskBox"></div>
+    </div>
     <div class="addon" id="addonBox"></div>
     <div class="dirs">
       <span class="chip" id="chipType">型態<b class="dir-val" id="alignVal"></b></span>
@@ -863,22 +882,28 @@ function renderRisk() {
   var r = window.__curRec; if (!r) return;
   var box = document.getElementById("riskBox");
   var cap = parseFloat(document.getElementById("capInput").value) || 0;
-  var atr = r.atr || 0, PV = 10, MG = 31800, RISK = 0.03;
-  if (!r.lots_dir || cap <= 0 || atr <= 0) {
+  var PV = 10, MG = 31800, RISK = 0.03;
+  var p20 = String(PERIODS[2]);
+  var m20 = (r.ma_now && r.ma_now[p20] != null) ? r.ma_now[p20] : null;
+  var c = r.last_close;
+  if (!r.lots_dir || cap <= 0 || m20 == null) {
     box.textContent = "🧮 空手觀望 · 無建議口數"; box.className = "risklots lots-flat"; return;
   }
-  var unit = Math.floor(cap * RISK / (2 * atr * PV));   // 每檔位風險單位口數(隨本金成長=複利)
-  if (unit < 1) {
-    var need = Math.ceil(2 * atr * PV / RISK / 10000) * 10000;
-    box.textContent = "🧮 風險3% 算出 0 口(本金偏小,不足 1 風險單位) · 約需 NT$" + fmt(need, 0) + " 才夠 1 口";
+  // 風險式口數 = 本金×3% ÷ (到月線停損距離×每點值);月線=實際出場點,最小停損1%防貼線爆量
+  var dist = r.lots_dir > 0 ? (c - m20) : (m20 - c);
+  var stop = Math.max(dist, c * 0.01);
+  var lots = Math.floor(cap * RISK / (stop * PV));
+  var capMax = Math.floor(cap / MG), capped = false;
+  if (lots > capMax) { lots = capMax; capped = true; }
+  if (lots < 1) {
+    var need = Math.ceil(stop * PV / RISK / 10000) * 10000;
+    box.textContent = "🧮 風險3% 建議 0 口(本金不足) · 約需 NT$" + fmt(need, 0) + " 才夠 1 口";
     box.className = "risklots lots-flat"; return;
   }
-  var capMax = Math.floor(cap / MG), lots = r.lots * unit, capped = false;
-  if (lots > capMax) { lots = capMax; capped = true; }
   var dir = r.lots_dir > 0 ? "口多單" : "口空單";
   box.innerHTML = "🧮 風險3% · 建議 <b>" + lots + "</b> " + dir +
-    '<br><span style="font-weight:600;font-size:12.5px;color:#8B919B;">檔位 ' + r.lots + " × " + unit +
-    " 口/單位　ATR " + atr + " 點　保證金上限 " + capMax + " 口" + (capped ? " ⚠️已達上限" : "") + "</span>";
+    '<br><span style="font-weight:600;font-size:12.5px;color:#8B919B;">到月線停損 ' + Math.round(dist) +
+    " 點　每口風險 NT$" + fmt(stop * PV, 0) + "　保證金上限 " + capMax + " 口" + (capped ? " ⚠️已達上限" : "") + "</span>";
   box.className = "risklots " + (r.lots_dir > 0 ? "lots-long" : "lots-short");
 }
 function card(k, v, sub) {
