@@ -242,11 +242,11 @@ def build_history(bars, max_days=180):
         if d != 0:
             dw = "多" if d > 0 else "空"
             if phase == "expand":
-                action = "發散中 · 大幅加碼到滿倉 3 口" + dw + "單"
+                action = "發散中 · 大幅加碼、往滿倉（" + dw + "方）"
             elif phase == "fade":
-                action = "發散尾聲/開始收斂 · 逐步減碼至 2 口" + dw + "單（收獲利）"
+                action = "發散尾聲/開始收斂 · 逐步減碼、收獲利（" + dw + "方）"
             else:
-                action = "收斂進行中 · 不加碼、只留底倉 1 口" + dw + "單（等下次發散）"
+                action = "收斂進行中 · 不加碼、只留底倉（" + dw + "方）"
 
         recs.append({
             "date": bars[i]["date"], "close": round(c, 0),
@@ -564,7 +564,7 @@ function renderRisk() {
   if (forced) warn = '<div class="sub warn">⚠️ 本金小，滿倉這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
   else if (capped) warn = '<div class="sub warn">⚠️ 已達保證金上限 ' + capMax + ' 口</div>';
   riskBox.innerHTML = "現在建議 <b>" + N + "</b> " + word +
-    '<div class="sub">滿倉上限 ' + full + ' 口 · 短線強度 ' + tier + '/3 · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + '</div>' + warn;
+    '<div class="sub">滿倉上限 ' + full + ' 口 · 加碼階段 ' + tier + '/3 · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + '</div>' + warn;
   riskBox.className = "result " + (dir > 0 ? "long" : "short");
   window.__targetLots = N; renderHint();
 }
