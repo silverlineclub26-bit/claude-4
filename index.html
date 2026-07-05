@@ -105,9 +105,14 @@
   .chips button { flex:1; padding:8px 0; border-radius:8px; border:1px solid var(--line);
     background:#0E1116; color:var(--muted); font-size:13.5px; font-weight:800; cursor:pointer; transition:.15s; }
   .chips button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
-  .chips .custom { flex:1; min-width:0; padding:8px 4px; border-radius:8px; border:1px solid var(--line);
+  .chips .custom-wrap { flex:1; min-width:0; position:relative; display:flex; }
+  .chips .custom { width:100%; min-width:0; padding:8px 16px 8px 4px; border-radius:8px; border:1px solid var(--line);
     background:#0E1116; color:var(--ink); font-size:13px; font-weight:800; text-align:center; }
   .chips .custom:focus { outline:none; border-color:var(--accent); }
+  .chips .custom-wrap.filled::after { content:"%"; position:absolute; right:7px; top:50%; transform:translateY(-50%);
+    color:var(--muted); font-size:11.5px; font-weight:800; pointer-events:none; }
+  .chips .custom-wrap.on .custom { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .chips .custom-wrap.on.filled::after { color:#fff; }
 
   .hint { margin-top:10px; padding:12px 14px; border-radius:10px; font-size:14.5px; font-weight:800;
     text-align:center; border:1px solid; line-height:1.5; }
@@ -183,7 +188,7 @@
         <span class="risk-lab">風險</span>
         <div class="chips" id="riskChips">
           <button data-r="5">5%</button><button data-r="10">10%</button><button data-r="20">20%</button><button data-r="30">30%</button>
-          <input type="number" id="riskCustom" class="custom" min="1" max="100" placeholder="自訂" inputmode="numeric">
+          <span class="custom-wrap" id="riskCustomWrap"><input type="number" id="riskCustom" class="custom" min="1" max="100" placeholder="自訂" inputmode="numeric"></span>
         </div>
       </div>
       <div class="result" id="riskBox"></div>
@@ -191,7 +196,7 @@
   </div>
 
   <footer>
-    資料來源 FinMind（台指微台 MTX 近月主力）· 本頁產生 2026-07-06 00:03<br>
+    資料來源 FinMind（台指微台 MTX 近月主力）· 本頁產生 2026-07-06 00:31<br>
     歷史為當日(含)之前資料回推 · 僅供研究參考，非投資建議
   </footer>
 </div>
@@ -387,14 +392,20 @@ function _syncRisk() {
   var m = false;
   Array.prototype.forEach.call(_cb, function (x) { var on = parseFloat(x.getAttribute("data-r")) === window.__risk; x.classList.toggle("on", on); if (on) m = true; });
   riskCustom.value = m ? "" : window.__risk;
+  var w = document.getElementById("riskCustomWrap");
+  w.classList.toggle("on", !m);                       // 自訂被選 → 紅底定格
+  w.classList.toggle("filled", !m && riskCustom.value !== "");
 }
 Array.prototype.forEach.call(_cb, function (b) {
   b.addEventListener("click", function () { window.__risk = parseFloat(b.getAttribute("data-r")); try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {} _syncRisk(); renderRisk(); });
 });
 riskCustom.addEventListener("input", function () {
-  var v = parseFloat(riskCustom.value); if (!isFinite(v) || v <= 0) return;
+  var w = document.getElementById("riskCustomWrap");
+  w.classList.toggle("filled", riskCustom.value !== "");
+  var v = parseFloat(riskCustom.value); if (!isFinite(v) || v <= 0) { w.classList.remove("on"); return; }
   window.__risk = v; try { localStorage.setItem("ml_risk", window.__risk); } catch (e) {}
-  Array.prototype.forEach.call(_cb, function (x) { x.classList.remove("on"); }); renderRisk();
+  Array.prototype.forEach.call(_cb, function (x) { x.classList.remove("on"); });
+  w.classList.add("on"); renderRisk();
 });
 _syncRisk();
 
