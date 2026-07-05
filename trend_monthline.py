@@ -775,8 +775,8 @@ def generate_html_report(groups, periods):
   .hintbox b { font-size:17px; }
   .hint-add { color:#3DA9FC; border-color:rgba(61,169,252,.5); background:rgba(61,169,252,.1); }
   .hint-cut { color:#D4A73C; border-color:rgba(212,167,60,.5); background:rgba(212,167,60,.1); }
-  .hint-out { color:#E5484D; border-color:rgba(229,72,77,.5); background:rgba(229,72,77,.1); }
-  .hint-ok  { color:#3DAE73; border-color:rgba(61,174,115,.5); background:rgba(61,174,115,.1); }
+  .hint-out { color:#3DAE73; border-color:rgba(61,174,115,.5); background:rgba(61,174,115,.1); }
+  .hint-ok  { color:#E5484D; border-color:rgba(229,72,77,.5); background:rgba(229,72,77,.1); }
   .action { margin-top:14px; padding:12px 14px; border-radius:8px; font-weight:700; font-size:15.5px; }
   .act-hold-long { background:rgba(229,72,77,.12); color:#E5484D; border:1px solid rgba(229,72,77,.45); }
   .act-hold-short { background:rgba(61,174,115,.12); color:#3DAE73; border:1px solid rgba(61,174,115,.45); }
