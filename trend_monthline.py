@@ -824,7 +824,6 @@ def generate_html_report(groups, periods):
     <div class="verdict-title"><span id="verdictLabel">—</span></div>
     <div class="verdict-desc" id="verdictDesc"></div>
     <div class="action" id="actionBox"></div>
-    <div class="lots" id="lotsBox"></div>
     <div class="risk-card">
       <div class="risk-head">🧮 風險 3% 口數試算<span class="tag">台指微台 · 破月線出場</span></div>
       <div class="cap-field">
@@ -1029,11 +1028,6 @@ function render(idx) {
   const act = document.getElementById("actionBox");
   act.textContent = r.action_label;
   act.className = "action " + (r.action_class || "act-scalp");
-
-  const lotsEl = document.getElementById("lotsBox");
-  lotsEl.textContent = "📊 " + r.lots_label;
-  lotsEl.className = "lots " + (r.lots === 0 ? "lots-flat"
-                    : r.state && r.state.indexOf("up") === 0 ? "lots-long" : "lots-short");
 
   window.__curRec = r;
   renderRisk();
