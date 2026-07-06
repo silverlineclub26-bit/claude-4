@@ -638,7 +638,11 @@ function renderRisk() {
   var r = window.__curRec; if (!r) return;
   var bl = document.getElementById("baseLots");
   var PVV = CT().pv, MG = CT().mg;
-  var cap = (parseFloat(capInput.value) || 0) * 10000;   // 萬元
+  var baseCap = (parseFloat(capInput.value) || 0) * 10000;   // 輸入本金(萬元)
+  // 即時權益 = 本金 + 未實現損益:價漲離月線變遠時,獲利同步墊高可下口數(與回測一致)
+  var _pl = parseFloat(posLots.value) || 0, _pc = parseFloat(posCost.value) || 0, _pd = window.__posDir || 1;
+  var upnl = (_pl > 0 && _pc > 0) ? (r.close - _pc) * _pd * _pl * PVV : 0;
+  var cap = baseCap + upnl;
   var RISK = (window.__risk || 10) / 100;
   var dir = r.dir, m20 = r.ma20, c = r.close;
   if (dir === 0) {
@@ -678,8 +682,9 @@ function renderRisk() {
   var warn = "";
   if (forced) warn = '<div class="sub warn">⚠️ 本金小，滿倉這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
   else if (capped) warn = '<div class="sub warn">⚠️ 已達斷頭緩衝上限 ' + capMax + ' 口（撐得過近跌停）</div>';
+  var eqNote = upnl ? ' · 權益 NT$' + fmt(cap, 0) + '（本金+浮盈 ' + (upnl >= 0 ? '+' : '') + fmt(upnl, 0) + '）' : '';
   riskBox.innerHTML = "現在建議 <b>" + N + "</b> " + word +
-    '<div class="sub">滿倉上限 ' + full + ' 口 · 部位 ' + Math.round(fill * 100) + '%（' + fillLab + '） · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + '</div>' + warn;
+    '<div class="sub">滿倉上限 ' + full + ' 口 · 部位 ' + Math.round(fill * 100) + '%（' + fillLab + '） · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + eqNote + '</div>' + warn;
   riskBox.className = "result " + (dir > 0 ? "long" : "short");
   window.__targetLots = N; renderHint();
 }
