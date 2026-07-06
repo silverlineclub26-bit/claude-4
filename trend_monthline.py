@@ -290,9 +290,9 @@ def build_history(bars, max_days=180):
         if d == 0:
             fill_base = 0.0       # 階段基準比例(減碼前)
         elif phase == "expand":
-            fill_base = 0.8       # 平時發散 → 上限八成
+            fill_base = 1.0       # 發散中 → 可滿倉(絕對口數由斷頭緩衝上限控管)
         elif phase == "fade":
-            fill_base = 0.667     # 尾聲 → 約七成
+            fill_base = 0.6       # 開始轉收斂 → 減碼(「不要滿倉」的訊號)
         else:
             fill_base = 0.333     # 收斂 → 底倉三成
         fill = 1.0 if (pullback_add and d != 0) else fill_base   # 回檔不破 → 滿倉
@@ -654,7 +654,8 @@ function renderRisk() {
   var dist = dir > 0 ? (c - m20) : (m20 - c);
   var stop = Math.max(dist, c * 0.01);        // 到月線停損（最小 1%）
   var oneLot = stop * PVV;
-  var capMax = Math.floor(cap / MG);
+  var buf = 0.75 * MG + 0.10 * c * PVV;        // 斷頭緩衝:口數要撐得過盤中近跌停(10%)
+  var capMax = Math.floor(cap / buf);          // 永遠開著的斷頭防護上限
   var full = Math.floor(cap * RISK / oneLot);  // 滿倉(風險式)
   var forced = false;
   if (full < 1 && capMax >= 1) { full = 1; forced = true; }
@@ -668,7 +669,7 @@ function renderRisk() {
   }
   var fill = (r.fill != null) ? r.fill : (r.lots / 3);   // 部位比例:發散上限八成、回檔不破才滿倉
   var N = Math.max(1, Math.round(full * fill));
-  var fillLab = r.pullback_add ? "回檔不破·可滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 0.8 ? "發散·上限八成" : (fill >= 0.66 ? "尾聲·約七成" : "收斂·底倉三成")));
+  var fillLab = r.pullback_add ? "回檔不破·滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 1 ? "發散·滿倉" : (fill >= 0.6 ? "轉收斂·減碼六成" : "收斂·底倉三成")));
   var word = dir > 0 ? "口多單" : "口空單";
   var col = dir > 0 ? "var(--red)" : "var(--green)";
   // Section 1:現在建議持有(統一口數)
@@ -676,7 +677,7 @@ function renderRisk() {
   // 試算卡:現在 N + 滿倉 full
   var warn = "";
   if (forced) warn = '<div class="sub warn">⚠️ 本金小，滿倉這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
-  else if (capped) warn = '<div class="sub warn">⚠️ 已達保證金上限 ' + capMax + ' 口</div>';
+  else if (capped) warn = '<div class="sub warn">⚠️ 已達斷頭緩衝上限 ' + capMax + ' 口（撐得過近跌停）</div>';
   riskBox.innerHTML = "現在建議 <b>" + N + "</b> " + word +
     '<div class="sub">滿倉上限 ' + full + ' 口 · 部位 ' + Math.round(fill * 100) + '%（' + fillLab + '） · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + '</div>' + warn;
   riskBox.className = "result " + (dir > 0 ? "long" : "short");
