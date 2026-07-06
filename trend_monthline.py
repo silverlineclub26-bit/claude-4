@@ -292,7 +292,7 @@ def build_history(bars, max_days=180):
         elif phase == "expand":
             fill_base = 1.0       # 發散中 → 可滿倉(絕對口數由斷頭緩衝上限控管)
         elif phase == "fade":
-            fill_base = 0.6       # 開始轉收斂 → 減碼(「不要滿倉」的訊號)
+            fill_base = 0.5       # 開始轉收斂 → 五成(統一「中間級距」都五成,好記)
         else:
             fill_base = 0.333     # 收斂 → 底倉三成
         fill = 1.0 if (pullback_add and d != 0) else fill_base   # 回檔不破 → 滿倉
@@ -673,7 +673,7 @@ function renderRisk() {
   }
   var fill = (r.fill != null) ? r.fill : (r.lots / 3);   // 部位比例:發散上限八成、回檔不破才滿倉
   var N = Math.max(1, Math.round(full * fill));
-  var fillLab = r.pullback_add ? "回檔不破·滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 1 ? "發散·滿倉" : (fill >= 0.6 ? "轉收斂·減碼六成" : "收斂·底倉三成")));
+  var fillLab = r.pullback_add ? "回檔不破·滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 1 ? "發散·滿倉" : (fill >= 0.5 ? "轉收斂·五成" : "收斂·底倉三成")));
   var word = dir > 0 ? "口多單" : "口空單";
   var col = dir > 0 ? "var(--red)" : "var(--green)";
   // Section 1:現在建議持有(統一口數)
