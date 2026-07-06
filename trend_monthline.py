@@ -275,6 +275,16 @@ def build_history(bars, max_days=180):
         _, p_cls, p_tier = PHASE_META[phase]
         p_label = plab               # 顯示實際觸發原因(發散 or 糾結突破)
         lots = 0 if d == 0 else p_tier
+        # 回檔不破加碼:趨勢中「收黑(回檔)但守住10日不破」= 好加碼點 → 補到滿倉
+        # (29年回測:疊在發散之上、報酬升、回檔持平;不取代發散,只在好點位補滿)
+        pullback_add = False
+        if d != 0 and i >= 1 and m10 is not None and closes[i - 1] is not None:
+            if d > 0:
+                pullback_add = (c < closes[i - 1]) and (c > m10)   # 多頭:收黑但守10日上
+            else:
+                pullback_add = (c > closes[i - 1]) and (c < m10)   # 空頭:收紅但守10日下
+        if pullback_add:
+            lots = 3
 
         # 波動→停損上移改由 live 15分即時負責;網站停損統一掛月線
         warn = False
@@ -285,7 +295,9 @@ def build_history(bars, max_days=180):
         # 依週期階段覆寫建議動作(待確認狀態保留自己的續抱說明)
         if d != 0 and state not in ("hold_below", "hold_above"):
             dw = "多" if d > 0 else "空"
-            if phase == "expand":
+            if pullback_add:
+                action = "回檔不破守住10日 · 好加碼點、補到滿倉（" + dw + "方）"
+            elif phase == "expand":
                 action = "發散中 · 大幅加碼、往滿倉（" + dw + "方）"
             elif phase == "fade":
                 action = "發散尾聲/開始收斂 · 逐步減碼、收獲利（" + dw + "方）"
@@ -298,6 +310,7 @@ def build_history(bars, max_days=180):
             "ma5": _r(m5), "ma10": _r(m10), "ma20": _r(m20),
             "ma60": _r(m60), "ma240": _r(ma240[i]),
             "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
+            "pullback_add": 1 if pullback_add else 0,
             "mode": phase, "mode_label": p_label, "mode_cls": p_cls,
             "warn": 1 if warn else 0, "stop": _r(stop_val), "stop_label": stop_label,
             "conv_label": conv_label, "triband_label": triband_label,
