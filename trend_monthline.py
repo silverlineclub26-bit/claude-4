@@ -285,6 +285,18 @@ def build_history(bars, max_days=180):
                 pullback_add = (c > closes[i - 1]) and (c < m10)   # 空頭:收紅但守10日下
         if pullback_add:
             lots = 3
+        # 部位比例(滿倉的幾成):平時發散最多「八成」,只有回檔不破才准「滿倉」
+        # (回測驗證:斷頭歸零、報酬幾乎不減——最後兩成只加在回檔守線的好點位)
+        if d == 0:
+            fill = 0.0
+        elif pullback_add:
+            fill = 1.0            # 回檔不破 → 滿倉
+        elif phase == "expand":
+            fill = 0.8            # 平時發散 → 上限八成
+        elif phase == "fade":
+            fill = 0.667          # 尾聲 → 約七成
+        else:
+            fill = 0.333          # 收斂 → 底倉三成
 
         # 波動→停損上移改由 live 15分即時負責;網站停損統一掛月線
         warn = False
@@ -310,7 +322,7 @@ def build_history(bars, max_days=180):
             "ma5": _r(m5), "ma10": _r(m10), "ma20": _r(m20),
             "ma60": _r(m60), "ma240": _r(ma240[i]),
             "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
-            "pullback_add": 1 if pullback_add else 0,
+            "pullback_add": 1 if pullback_add else 0, "fill": round(fill, 3),
             "mode": phase, "mode_label": p_label, "mode_cls": p_cls,
             "warn": 1 if warn else 0, "stop": _r(stop_val), "stop_label": stop_label,
             "conv_label": conv_label, "triband_label": triband_label,
@@ -646,8 +658,9 @@ function renderRisk() {
     bl.innerHTML = '<span style="color:var(--muted)">本金不足 1 口</span>';
     window.__targetLots = 0; renderHint(); return;
   }
-  var tier = r.lots;                                    // 短線強度 1~3
-  var N = Math.max(1, Math.round(full * tier / 3));     // 進取型:依強度分批到滿倉
+  var fill = (r.fill != null) ? r.fill : (r.lots / 3);   // 部位比例:發散上限八成、回檔不破才滿倉
+  var N = Math.max(1, Math.round(full * fill));
+  var fillLab = r.pullback_add ? "回檔不破·可滿倉" : (fill >= 0.8 ? "發散·上限八成" : (fill >= 0.66 ? "尾聲·約七成" : "收斂·底倉三成"));
   var word = dir > 0 ? "口多單" : "口空單";
   var col = dir > 0 ? "var(--red)" : "var(--green)";
   // Section 1:現在建議持有(統一口數)
@@ -657,7 +670,7 @@ function renderRisk() {
   if (forced) warn = '<div class="sub warn">⚠️ 本金小，滿倉這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
   else if (capped) warn = '<div class="sub warn">⚠️ 已達保證金上限 ' + capMax + ' 口</div>';
   riskBox.innerHTML = "現在建議 <b>" + N + "</b> " + word +
-    '<div class="sub">滿倉上限 ' + full + ' 口 · 加碼階段 ' + tier + '/3 · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + '</div>' + warn;
+    '<div class="sub">滿倉上限 ' + full + ' 口 · 部位 ' + Math.round(fill * 100) + '%（' + fillLab + '） · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + '</div>' + warn;
   riskBox.className = "result " + (dir > 0 ? "long" : "short");
   window.__targetLots = N; renderHint();
 }
