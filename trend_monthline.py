@@ -288,15 +288,22 @@ def build_history(bars, max_days=180):
         # 部位比例(滿倉的幾成):平時發散最多「八成」,只有回檔不破才准「滿倉」
         # (回測驗證:斷頭歸零、報酬幾乎不減——最後兩成只加在回檔守線的好點位)
         if d == 0:
-            fill = 0.0
-        elif pullback_add:
-            fill = 1.0            # 回檔不破 → 滿倉
+            fill_base = 0.0       # 階段基準比例(減碼前)
         elif phase == "expand":
-            fill = 0.8            # 平時發散 → 上限八成
+            fill_base = 0.8       # 平時發散 → 上限八成
         elif phase == "fade":
-            fill = 0.667          # 尾聲 → 約七成
+            fill_base = 0.667     # 尾聲 → 約七成
         else:
-            fill = 0.333          # 收斂 → 底倉三成
+            fill_base = 0.333     # 收斂 → 底倉三成
+        fill = 1.0 if (pullback_add and d != 0) else fill_base   # 回檔不破 → 滿倉
+        # 減碼規則:趨勢中跌破短均線就先縮部位(不等月線破)→ 反轉少受傷。回檔不破豁免。
+        # (29年回測:回檔大降~13%,報酬幾乎不變)raw: 3=站上5日 2=破5日守10日 1=破10日/守月線
+        reduce_label = ""
+        if d != 0 and not pullback_add:
+            if raw <= 1:
+                fill = min(fill, 0.333); reduce_label = "破10日·減碼底倉"
+            elif raw == 2:
+                fill = min(fill, 0.5);   reduce_label = "破5日·減碼五成"
 
         # 波動→停損上移改由 live 15分即時負責;網站停損統一掛月線
         warn = False
@@ -323,6 +330,7 @@ def build_history(bars, max_days=180):
             "ma60": _r(m60), "ma240": _r(ma240[i]),
             "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
             "pullback_add": 1 if pullback_add else 0, "fill": round(fill, 3),
+            "fill_base": round(fill_base, 3), "reduce_label": reduce_label,
             "mode": phase, "mode_label": p_label, "mode_cls": p_cls,
             "warn": 1 if warn else 0, "stop": _r(stop_val), "stop_label": stop_label,
             "conv_label": conv_label, "triband_label": triband_label,
@@ -660,7 +668,7 @@ function renderRisk() {
   }
   var fill = (r.fill != null) ? r.fill : (r.lots / 3);   // 部位比例:發散上限八成、回檔不破才滿倉
   var N = Math.max(1, Math.round(full * fill));
-  var fillLab = r.pullback_add ? "回檔不破·可滿倉" : (fill >= 0.8 ? "發散·上限八成" : (fill >= 0.66 ? "尾聲·約七成" : "收斂·底倉三成"));
+  var fillLab = r.pullback_add ? "回檔不破·可滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 0.8 ? "發散·上限八成" : (fill >= 0.66 ? "尾聲·約七成" : "收斂·底倉三成")));
   var word = dir > 0 ? "口多單" : "口空單";
   var col = dir > 0 ? "var(--red)" : "var(--green)";
   // Section 1:現在建議持有(統一口數)
