@@ -196,7 +196,7 @@
   </div>
 
   <footer>
-    資料來源 FinMind（台指微台 MTX 近月主力）· 本頁產生 2026-07-06 20:17<br>
+    資料來源 FinMind（台指微台 MTX 近月主力）· 本頁產生 2026-07-06 20:26<br>
     歷史為當日(含)之前資料回推 · 僅供研究參考，非投資建議
   </footer>
 </div>
@@ -307,7 +307,7 @@ function renderRisk() {
   var dist = dir > 0 ? (c - m20) : (m20 - c);
   var stop = Math.max(dist, c * 0.01);        // 到月線停損（最小 1%）
   var oneLot = stop * PVV;
-  var buf = 0.75 * MG + 0.07 * c * PVV;        // 斷頭緩衝:口數要撐得過單日重挫(7%,舊制跌停級)
+  var buf = 0.75 * MG + 0.05 * c * PVV;        // 斷頭緩衝5%:主動管理(停損/減碼)是主防線,這是「跳空開盤來不及反應」的安全氣囊
   var capMax = Math.floor(cap / buf);          // 永遠開著的斷頭防護上限
   var full = Math.floor(cap * RISK / oneLot);  // 滿倉(風險式)
   var forced = false;
@@ -330,7 +330,7 @@ function renderRisk() {
   // 試算卡:現在 N + 滿倉 full
   var warn = "";
   if (forced) warn = '<div class="sub warn">⚠️ 本金小，滿倉這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
-  else if (capped) warn = '<div class="sub warn">⚠️ 已達斷頭緩衝上限 ' + capMax + ' 口（撐得過單日重挫7%）</div>';
+  else if (capped) warn = '<div class="sub warn">⚠️ 已達斷頭緩衝上限 ' + capMax + ' 口（撐得過跳空5%,其餘靠主動停損）</div>';
   var eqNote = upnl ? ' · 權益 NT$' + fmt(cap, 0) + '（本金+浮盈 ' + (upnl >= 0 ? '+' : '') + fmt(upnl, 0) + '）' : '';
   riskBox.innerHTML = "現在建議 <b>" + N + "</b> " + word +
     '<div class="sub">滿倉上限 ' + full + ' 口 · 部位 ' + Math.round(fill * 100) + '%（' + fillLab + '） · 到月線 ' + Math.round(dist) + ' 點 · 一口風險 NT$' + fmt(oneLot, 0) + eqNote + '</div>' + warn;
