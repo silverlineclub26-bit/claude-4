@@ -514,7 +514,6 @@ _TEMPLATE = r"""<!DOCTYPE html>
       <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
       <div class="maline" id="maLine"></div>
       <div class="desc" id="descEl"></div>
-      <div class="baselots" id="baseLots"></div>
     </div>
   </div>
 
@@ -641,7 +640,6 @@ function render(idx) {
 
 function renderRisk() {
   var r = window.__curRec; if (!r) return;
-  var bl = document.getElementById("baseLots");
   var PVV = CT().pv, MG = CT().mg;
   var baseCap = (parseFloat(capInput.value) || 0) * 10000;   // 輸入本金(萬元)
   // 即時權益 = 本金 + 未實現損益:價漲離月線變遠時,獲利同步墊高可下口數(與回測一致)
@@ -652,12 +650,10 @@ function renderRisk() {
   var dir = r.dir, m20 = r.ma20, c = r.close;
   if (dir === 0) {
     riskBox.textContent = "系統空手 · 無建議口數"; riskBox.className = "result flat";
-    bl.innerHTML = '<span style="color:var(--muted)">系統空手觀望（0 口）</span>';
     window.__targetLots = 0; renderHint(); return;
   }
   if (cap <= 0 || m20 == null) {
     riskBox.textContent = "請於下方輸入本金"; riskBox.className = "result flat";
-    bl.innerHTML = '<span style="color:var(--muted)">請輸入本金以計算建議口數</span>';
     window.__targetLots = 0; renderHint(); return;
   }
   var dist = dir > 0 ? (c - m20) : (m20 - c);
@@ -673,17 +669,13 @@ function renderRisk() {
   if (full < 1) {
     riskBox.textContent = "建議 0 口 · 本金不足一口保證金 NT$" + fmt(MG, 0);
     riskBox.className = "result flat";
-    bl.innerHTML = '<span style="color:var(--muted)">本金不足 1 口</span>';
     window.__targetLots = 0; renderHint(); return;
   }
   var fill = (r.fill != null) ? r.fill : (r.lots / 3);   // 部位比例:發散上限八成、回檔不破才滿倉
   var N = Math.max(1, Math.round(full * fill));
   var fillLab = r.vol_add ? "波動放大·守月線加碼" : (r.pullback_add ? "回檔不破·滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 1 ? "發散·滿倉" : (fill >= 0.5 ? "轉收斂·五成" : "收斂·底倉三成"))));
   var word = dir > 0 ? "口多單" : "口空單";
-  var col = dir > 0 ? "var(--red)" : "var(--green)";
-  // Section 1:現在建議持有(統一口數)
-  bl.innerHTML = '現在建議持有 <b style="color:' + col + '">' + N + '</b> ' + word;
-  // 試算卡:現在 N + 滿倉 full
+  // 建議口數(風險卡顯示;每日盤勢卡不放口數)
   var warn = "";
   if (forced) warn = '<div class="sub warn">⚠️ 本金小，滿倉這 1 口風險約 ' + (oneLot / cap * 100).toFixed(0) + '%，已超過所選 ' + (RISK * 100) + '%</div>';
   else if (capped) warn = '<div class="sub warn">⚠️ 已達斷頭緩衝上限 ' + capMax + ' 口（撐得過跳空5%,其餘靠主動停損）</div>';
