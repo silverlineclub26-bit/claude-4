@@ -285,7 +285,20 @@ def build_history(bars, max_days=180):
                 pullback_add = (c > closes[i - 1]) and (c < m10)   # 空頭:收紅但守10日下
         if pullback_add:
             lots = 3
-        # 部位比例(滿倉的幾成):平時發散最多「八成」,只有回檔不破才准「滿倉」
+        # 波動放大加碼:當日振幅 > 近20日均的 VOLK 倍、且守月線(趨勢仍在)→ 恐慌/爆量常是轉折,買不砍。
+        # (29年回測:VK=1.75 年化+2.4%、回檔不惡化、斷頭0;破月線仍出場不加。與「拿波動大去砍」相反,砍會賣在底。)
+        VOLK = 1.75
+        vol_ratio = 0.0
+        if i >= 20:
+            _aw = ranges[i - 20:i]
+            _av = sum(_aw) / len(_aw) if _aw else 0.0
+            if _av > 0:
+                vol_ratio = ranges[i] / _av
+        on_side = (c > m20) if d > 0 else (c < m20)               # 守月線(趨勢仍在)
+        vol_add = bool(d != 0 and vol_ratio >= VOLK and on_side)
+        if vol_add:
+            lots = 3
+        # 部位比例(滿倉的幾成):平時發散最多「八成」,只有回檔不破 / 波動放大守月線才准「滿倉」
         # (回測驗證:斷頭歸零、報酬幾乎不減——最後兩成只加在回檔守線的好點位)
         if d == 0:
             fill_base = 0.0       # 階段基準比例(減碼前)
@@ -295,11 +308,11 @@ def build_history(bars, max_days=180):
             fill_base = 0.5       # 開始轉收斂 → 五成(統一「中間級距」都五成,好記)
         else:
             fill_base = 0.333     # 收斂 → 底倉三成
-        fill = 1.0 if (pullback_add and d != 0) else fill_base   # 回檔不破 → 滿倉
-        # 減碼規則:趨勢中跌破短均線就先縮部位(不等月線破)→ 反轉少受傷。回檔不破豁免。
+        fill = 1.0 if ((pullback_add or vol_add) and d != 0) else fill_base   # 回檔不破 / 波動放大守月線 → 滿倉
+        # 減碼規則:趨勢中跌破短均線就先縮部位(不等月線破)→ 反轉少受傷。回檔不破 / 波動放大守月線 豁免。
         # (29年回測:回檔大降~13%,報酬幾乎不變)raw: 3=站上5日 2=破5日守10日 1=破10日/守月線
         reduce_label = ""
-        if d != 0 and not pullback_add:
+        if d != 0 and not pullback_add and not vol_add:
             if raw <= 1:
                 fill = min(fill, 0.333); reduce_label = "破10日·減碼底倉"
             elif raw == 2:
@@ -314,7 +327,9 @@ def build_history(bars, max_days=180):
         # 依週期階段覆寫建議動作(待確認狀態保留自己的續抱說明)
         if d != 0 and state not in ("hold_below", "hold_above"):
             dw = "多" if d > 0 else "空"
-            if pullback_add:
+            if vol_add:
+                action = "波動放大+守月線 · 恐慌爆量常是轉折 · 加碼往滿倉（" + dw + "方）"
+            elif pullback_add:
                 action = "回檔不破守住10日 · 好加碼點、補到滿倉（" + dw + "方）"
             elif phase == "expand":
                 action = "發散中 · 大幅加碼、往滿倉（" + dw + "方）"
@@ -329,6 +344,7 @@ def build_history(bars, max_days=180):
             "ma5": _r(m5), "ma10": _r(m10), "ma20": _r(m20),
             "ma60": _r(m60), "ma240": _r(ma240[i]),
             "regime": regime, "dir": d, "lots": lots, "raw": raw, "state": state,
+            "vol_add": 1 if vol_add else 0, "vol_ratio": round(vol_ratio, 2),
             "pullback_add": 1 if pullback_add else 0, "fill": round(fill, 3),
             "fill_base": round(fill_base, 3), "reduce_label": reduce_label,
             "mode": phase, "mode_label": p_label, "mode_cls": p_cls,
@@ -673,7 +689,7 @@ function renderRisk() {
   }
   var fill = (r.fill != null) ? r.fill : (r.lots / 3);   // 部位比例:發散上限八成、回檔不破才滿倉
   var N = Math.max(1, Math.round(full * fill));
-  var fillLab = r.pullback_add ? "回檔不破·滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 1 ? "發散·滿倉" : (fill >= 0.5 ? "轉收斂·五成" : "收斂·底倉三成")));
+  var fillLab = r.vol_add ? "波動放大·守月線加碼" : (r.pullback_add ? "回檔不破·滿倉" : (r.reduce_label ? r.reduce_label : (fill >= 1 ? "發散·滿倉" : (fill >= 0.5 ? "轉收斂·五成" : "收斂·底倉三成"))));
   var word = dir > 0 ? "口多單" : "口空單";
   var col = dir > 0 ? "var(--red)" : "var(--green)";
   // Section 1:現在建議持有(統一口數)
