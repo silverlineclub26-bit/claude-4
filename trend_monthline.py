@@ -507,14 +507,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
   <!-- 1. 盤勢建議 -->
   <div class="card" id="cardStance">
-    <div class="card-title">📈 目前盤勢建議<span class="caret">▾</span></div>
+    <div class="card-title">📈 每日盤勢<span class="tag">收盤定調 · 隔日確認</span><span class="caret">▾</span></div>
     <div class="card-body">
       <span class="regime" id="regimeTag"></span><span class="mode" id="modeTag"></span>
       <div class="headline"><span id="headEl">—</span><span class="arrow" id="arrowEl"></span></div>
       <div class="metaline">收盤日 <b id="dateOut">—</b> · 收盤 <b id="closeOut">—</b> <span id="latestBadge"></span></div>
       <div class="maline" id="maLine"></div>
       <div class="desc" id="descEl"></div>
-      <div class="action" id="actionEl"></div>
       <div class="baselots" id="baseLots"></div>
     </div>
   </div>
@@ -631,9 +630,6 @@ function render(idx) {
   document.getElementById("latestBadge").textContent = isLatest ? "· ● 最新" : "· ○ 歷史回推";
 
   document.getElementById("descEl").textContent = r.desc;
-  const act = document.getElementById("actionEl");
-  act.textContent = r.action;
-  act.className = "action " + (r.dir > 0 ? "act-long" : r.dir < 0 ? "act-short" : "act-flat");
 
   window.__curRec = r;
   renderRisk();
