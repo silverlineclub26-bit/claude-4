@@ -607,7 +607,7 @@ function render(idx) {
   rt.textContent = rg.label; rt.className = "regime " + rg.cls;
   const mt = document.getElementById("modeTag");
   mt.textContent = r.mode_label; mt.className = "mode " + r.mode_cls;
-  document.getElementById("maLine").innerHTML = "均線：發散度 <b>" + r.conv_label + "</b> · 三線 <b>" + r.triband_label + "</b>";
+  document.getElementById("maLine").innerHTML = "雙線 <b>" + r.conv_label + "</b> · 三線 <b>" + r.triband_label + "</b>";
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
