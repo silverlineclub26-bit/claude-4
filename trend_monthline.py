@@ -612,16 +612,15 @@ function render(idx) {
 
   const head = document.getElementById("headEl");
   head.textContent = r.headline; head.style.color = r.accent;
-  // 箭頭數 = 均線多頭/空頭「排列」達成幾層(彼此獨立):5>10、10>月、月>季
+  // 均線排列天氣(5/10/20):5>10>20 多頭排列=☀️太陽;5<10<20 空頭排列=🌧️下雨;其餘 糾結=⛅多雲
   const arrow = document.getElementById("arrowEl");
-  if (r.dir !== 0) {
-    var conds = (r.dir > 0)
-      ? [r.ma5 > r.ma10, r.ma10 > r.ma20, (r.ma60 != null && r.ma20 > r.ma60)]
-      : [r.ma5 < r.ma10, r.ma10 < r.ma20, (r.ma60 != null && r.ma20 < r.ma60)];
-    var cnt = conds.filter(Boolean).length;
-    arrow.textContent = cnt > 0 ? (r.dir > 0 ? "↑" : "↓").repeat(cnt) : "";
-    arrow.style.color = r.accent;
-  } else { arrow.textContent = ""; }
+  var a5 = r.ma5, a10 = r.ma10, a20 = r.ma20, wx = "", wl = "";
+  if (a5 != null && a10 != null && a20 != null) {
+    if (a5 > a10 && a10 > a20) { wx = "☀️"; wl = "多頭排列"; }
+    else if (a5 < a10 && a10 < a20) { wx = "🌧️"; wl = "空頭排列"; }
+    else { wx = "⛅"; wl = "糾結"; }
+  }
+  arrow.innerHTML = wx ? (wx + '<span style="font-size:13px;font-weight:700;margin-left:5px;color:var(--muted)">' + wl + '</span>') : "";
 
   document.getElementById("dateOut").textContent = r.date;
   var ce = document.getElementById("closeOut");
