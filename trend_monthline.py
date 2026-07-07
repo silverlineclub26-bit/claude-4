@@ -391,12 +391,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .nav button { width:38px; height:38px; border-radius:9px; border:1px solid var(--line);
     background:var(--card); color:var(--ink); font-size:18px; cursor:pointer; }
   .nav button:disabled { opacity:.35; }
-  .ct-row { display:flex; align-items:center; gap:10px; margin:12px 0 0; }
-  .ct-lab { font-size:12px; color:var(--muted); font-weight:800; }
-  .ct-seg { display:flex; gap:6px; flex:1; }
-  .ct-seg button { flex:1; padding:9px 0; border-radius:9px; border:1px solid var(--line);
-    background:var(--card); color:var(--muted); font-size:14px; font-weight:800; cursor:pointer; transition:.15s; }
-  .ct-seg button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .ct-sel { padding:9px 10px; border-radius:9px; border:1px solid var(--line);
+    background:var(--card); color:var(--ink); font-size:14px; font-weight:800; cursor:pointer; }
 
   .card { background:var(--card); border:1px solid var(--line); border-radius:14px;
     padding:16px; margin-bottom:12px; }
@@ -496,20 +492,17 @@ _TEMPLATE = r"""<!DOCTYPE html>
 <div class="wrap">
   <h1>PO的期貨無腦照作系統 V1.0</h1>
 
-  <div class="ct-row">
-    <span class="ct-lab">商品</span>
-    <div class="ct-seg" id="ctSeg">
-      <button data-c="TX">大台</button><button data-c="MTX">小台</button><button data-c="TMF">微台</button>
-    </div>
-  </div>
-
   <div class="picker">
-    <label>日期</label>
     <input type="date" id="dateInput">
     <div class="nav">
       <button id="prevBtn" title="前一交易日">‹</button>
       <button id="nextBtn" title="後一交易日">›</button>
     </div>
+    <select id="ctSel" class="ct-sel" title="商品">
+      <option value="TX">大台</option>
+      <option value="MTX">小台</option>
+      <option value="TMF">微台</option>
+    </select>
   </div>
 
   <!-- 1. 盤勢建議 -->
@@ -799,19 +792,15 @@ posLots.addEventListener("input", function () { try { localStorage.setItem("ml_p
 posCost.addEventListener("input", function () { try { localStorage.setItem("ml_pos_cost", posCost.value); } catch (e) {} renderPos(); });
 _syncPosDir();
 
-// 商品選擇(大台/小台/微台):切換後 PV、保證金、損益、口數全部跟著調整
-var ctSeg = document.getElementById("ctSeg");
+// 商品選擇(下拉:大台/小台/微台):切換後 PV、保證金、損益、口數全部跟著調整
+var ctSel = document.getElementById("ctSel");
 try { var _sct = localStorage.getItem("ml_ct"); if (_sct && CONTRACTS[_sct]) window.__ct = _sct; } catch (e) {}
-var _ctBtns = ctSeg.querySelectorAll("button");
-function _syncCt() { Array.prototype.forEach.call(_ctBtns, function (x) { x.classList.toggle("on", x.getAttribute("data-c") === window.__ct); }); }
-Array.prototype.forEach.call(_ctBtns, function (b) {
-  b.addEventListener("click", function () {
-    window.__ct = b.getAttribute("data-c");
-    try { localStorage.setItem("ml_ct", window.__ct); } catch (e) {}
-    _syncCt(); renderRisk(); renderPos();
-  });
+ctSel.value = window.__ct;
+ctSel.addEventListener("change", function () {
+  window.__ct = ctSel.value;
+  try { localStorage.setItem("ml_ct", window.__ct); } catch (e) {}
+  renderRisk(); renderPos();
 });
-_syncCt();
 
 // 區塊收放(點標題列切換,記憶狀態)
 Array.prototype.forEach.call(document.querySelectorAll(".card"), function (card) {
